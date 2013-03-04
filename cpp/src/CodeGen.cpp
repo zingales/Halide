@@ -851,7 +851,6 @@ Value *CodeGen::codegen_buffer_pointer(string buffer, Halide::Type type, Value *
 }
 
 Expr extract_ramp_helper(const Expr op, int *n_ramps) {
-    //IRPrinter irp = IRPrinter(std::cout);
     const Add *asAdd = op.as<Add>();
     const Sub *asSub = op.as<Sub>();
     const Mul *asMul = op.as<Mul>();
