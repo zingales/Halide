@@ -186,6 +186,9 @@ protected:
     virtual void visit(const Block *);        
     // @}
 
+    /** Special case for clamped vector load */
+    void create_load(const Load *, bool recurse);
+
     /** Generate code for an allocate node. It has no default
      * implementation - it must be handled in an architecture-specific
      * way. */

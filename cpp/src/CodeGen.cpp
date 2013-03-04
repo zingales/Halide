@@ -868,9 +868,9 @@ Expr extract_ramp_helper(const Expr op, int *n_ramps) {
         ret = new Sub(extract_ramp_helper(asSub->a, &n_ramps_a),
                       extract_ramp_helper(asSub->b, &n_ramps_b));
     } else if (asMul) {
-        // multiply - don't keep the n_ramps
-        ret = new Mul(extract_ramp_helper(asMul->a, NULL),
-                      extract_ramp_helper(asMul->b, NULL));        
+        // multiply
+        ret = new Mul(extract_ramp_helper(asMul->a, &n_ramps_a),
+                      extract_ramp_helper(asMul->b, &n_ramps_b));        
     } else if (asMax) {
         // max - if a or b has ramp, replace
         a = extract_ramp_helper(asMax->a, &n_ramps_a);
@@ -886,7 +886,7 @@ Expr extract_ramp_helper(const Expr op, int *n_ramps) {
         else if ((n_ramps_b == 1) && (n_ramps_b==1)) ret = b;
         else ret = new Min(a, b);
     } else if (asRamp) {
-        // replace ramp with base (for now)
+        // return ramp
         ret = op;
         n_ramps_a = 1;
     } else {
@@ -904,17 +904,73 @@ Expr extract_ramp(const Expr index) {
     else return index;
 }
 
+Expr extract_ramp_condition(const Expr op, int *n_ramps,
+			    bool use_min_val, bool replace_base_only) {
+    const Add *asAdd = op.as<Add>();
+    const Sub *asSub = op.as<Sub>();
+    const Mul *asMul = op.as<Mul>();
+    const Max *asMax = op.as<Max>();
+    const Min *asMin = op.as<Min>();
+    const Ramp *asRamp = op.as<Ramp>();
+    const Broadcast *asBroadcast = op.as<Broadcast>();
+    Expr ret, a, b;
+    int n_ramps_a = 0, n_ramps_b = 0;
+    if (asAdd) {
+        // add
+        ret = new Add(extract_ramp_condition(asAdd->a, &n_ramps_a,
+					     use_min_val, replace_base_only),
+                      extract_ramp_condition(asAdd->b, &n_ramps_b,
+					     use_min_val, replace_base_only));
+    } else if (asSub) {
+        // subtract
+        ret = new Sub(extract_ramp_condition(asSub->a, &n_ramps_a,
+					     use_min_val, replace_base_only),
+                      extract_ramp_condition(asSub->b, &n_ramps_b,
+					     use_min_val, replace_base_only));
+    } else if (asMul) {
+        // multiply
+        ret = new Mul(extract_ramp_condition(asMul->a, &n_ramps_a,
+					     use_min_val, replace_base_only),
+		      extract_ramp_condition(asMul->b, &n_ramps_b,
+					     use_min_val, replace_base_only));
+    } else if (asMax) {
+        // max - if a or b has ramp, replace
+        a = extract_ramp_condition(asMax->a, &n_ramps_a, use_min_val, replace_base_only);
+        b = extract_ramp_condition(asMax->b, &n_ramps_b, use_min_val, replace_base_only);
+        if (!replace_base_only && (n_ramps_a == 1) && (n_ramps_b==0)) ret = a;
+        else if (!replace_base_only && (n_ramps_a == 0) && (n_ramps_b==1)) ret = b;
+        else ret = new Max(a, b);
+    } else if (asMin) {
+        // min - if a or b has ramp, replace
+        a = extract_ramp_condition(asMin->a, &n_ramps_a, use_min_val, replace_base_only);
+        b = extract_ramp_condition(asMin->b, &n_ramps_b, use_min_val, replace_base_only);
+        if (!replace_base_only && (n_ramps_a == 1) && (n_ramps_b==0)) ret = a;
+        else if (!replace_base_only && (n_ramps_a == 0) && (n_ramps_b==1)) ret = b;
+        else ret = new Min(a, b);
+    } else if (asRamp) {
+	// TODO fix this for different kinds of ramps
+	n_ramps_a = 1;
+	if (use_min_val) {
+	    ret = asRamp->base;
+	} else {
+	    ret = asRamp->base + (asRamp->width*asRamp->stride);
+	}
+    } else if (asBroadcast) {
+	ret = asBroadcast->value;
+    } else {
+        ret = op;
+    }
+    if (n_ramps) *n_ramps = *n_ramps + n_ramps_a + n_ramps_b;
+    return ret;
+}
+
+
 void CodeGen::visit(const Load *op) {
+    create_load(op, true);
+}
+
+void CodeGen::create_load(const Load *op, bool recurse) {
     // There are several cases. Different architectures may wish to override some
-
-    IRPrinter irp = IRPrinter(std::cout);
-    printf("initial index: "); irp.print(op->index); printf("\n");
-    Expr new_base = extract_ramp(op->index);
-    printf("with conditions met: "); irp.print(new_base); printf("\n");
-    Expr simplified = simplify(new_base);
-    printf("simplified: "); irp.print(simplified); printf("\n");
-    printf("\n");
-
     if (op->type.is_scalar()) {
         // Scalar loads
         Value *index = codegen(op->index);
@@ -977,15 +1033,43 @@ void CodeGen::visit(const Load *op) {
             }
             value = builder->CreateShuffleVector(vec, undef, ConstantVector::get(indices));
         } else {                
-            // 5) General gathers
-            Value *index = codegen(op->index);
-            value = UndefValue::get(llvm_type_of(op->type));
-            for (int i = 0; i < op->type.width; i++) {
-                Value *idx = builder->CreateExtractElement(index, ConstantInt::get(i32, i));
-                Value *ptr = codegen_buffer_pointer(op->name, op->type.element_of(), idx);
-                Value *val = builder->CreateLoad(ptr);
-                value = builder->CreateInsertElement(value, val, ConstantInt::get(i32, i));
-            }
+	    // check for clamped vector load
+	    IRPrinter irp = IRPrinter(std::cout);
+	    printf("initial index: "); irp.print(op->index); printf("\n");
+	    Expr new_base = extract_ramp(op->index);
+	    printf("with conditions met: "); irp.print(new_base); printf("\n");
+	    Expr simplified = simplify(new_base);
+	    printf("simplified: "); irp.print(simplified); printf("\n");
+
+	    if (recurse && simplified.as<Ramp>()) {
+		Expr low_bound = new EQ(extract_ramp_condition(op->index, NULL, true, true),
+					extract_ramp_condition(op->index, NULL, true, false));
+		printf("low bound: "); irp.print(low_bound); printf("\n");
+		low_bound = simplify(low_bound);
+		printf("simplified low bound: "); irp.print(low_bound); printf("\n");
+		Expr high_bound = new EQ(extract_ramp_condition(op->index, NULL, false, true),
+					 extract_ramp_condition(op->index, NULL, false, false));
+		printf("high bound: "); irp.print(high_bound); printf("\n");
+		high_bound = simplify(high_bound);
+		printf("simplified high bound: "); irp.print(high_bound); printf("\n");
+		Expr condition = new And(low_bound, high_bound);
+		printf("condition: "); irp.print(condition); printf("\n");
+		condition = simplify(condition);
+		printf("simplified condition: "); irp.print(condition); printf("\n");
+		
+		
+	    }
+	    //} else {
+		// 5) General gathers
+		Value *index = codegen(op->index);
+		value = UndefValue::get(llvm_type_of(op->type));
+		for (int i = 0; i < op->type.width; i++) {
+		    Value *idx = builder->CreateExtractElement(index, ConstantInt::get(i32, i));
+		    Value *ptr = codegen_buffer_pointer(op->name, op->type.element_of(), idx);
+		    Value *val = builder->CreateLoad(ptr);
+		    value = builder->CreateInsertElement(value, val, ConstantInt::get(i32, i));
+		    //	}
+	    }
         }            
     }
 }
