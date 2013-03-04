@@ -1036,12 +1036,12 @@ void CodeGen::create_load(const Load *op, bool recurse) {
 	    // check for clamped vector load
 	    IRPrinter irp = IRPrinter(std::cout);
 	    printf("initial index: "); irp.print(op->index); printf("\n");
-	    Expr new_base = extract_ramp(op->index);
-	    printf("with conditions met: "); irp.print(new_base); printf("\n");
-	    Expr simplified = simplify(new_base);
-	    printf("simplified: "); irp.print(simplified); printf("\n");
+	    Expr new_index = extract_ramp(op->index);
+	    printf("with conditions met: "); irp.print(new_index); printf("\n");
+	    new_index = simplify(new_index);
+	    printf("simplified: "); irp.print(new_index); printf("\n");
 
-	    if (recurse && simplified.as<Ramp>()) {
+	    if (recurse && new_index.as<Ramp>()) {
 		Expr low_bound = new EQ(extract_ramp_condition(op->index, NULL, true, true),
 					extract_ramp_condition(op->index, NULL, true, false));
 		printf("low bound: "); irp.print(low_bound); printf("\n");
@@ -1056,10 +1056,18 @@ void CodeGen::create_load(const Load *op, bool recurse) {
 		printf("condition: "); irp.print(condition); printf("\n");
 		condition = simplify(condition);
 		printf("simplified condition: "); irp.print(condition); printf("\n");
-		
-		
-	    }
-	    //} else {
+		Load simplified_load = Load(op->type, op->name, new_index,
+					    op->image, op->param);
+		value = NULL;
+		create_load(&simplified_load, false);
+		Value *bounded = value;
+		value = NULL;
+		create_load(op, false);
+		Value *unbounded = value;
+		Value *condition_val = codegen(condition);
+		if (bounded && unbounded && condition_val) printf("yay!!!!!");
+		value = unbounded; // did not make recursive call, fell through
+	    } else {
 		// 5) General gathers
 		Value *index = codegen(op->index);
 		value = UndefValue::get(llvm_type_of(op->type));
@@ -1068,7 +1076,7 @@ void CodeGen::create_load(const Load *op, bool recurse) {
 		    Value *ptr = codegen_buffer_pointer(op->name, op->type.element_of(), idx);
 		    Value *val = builder->CreateLoad(ptr);
 		    value = builder->CreateInsertElement(value, val, ConstantInt::get(i32, i));
-		    //	}
+		}
 	    }
         }            
     }
