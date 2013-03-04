@@ -8,6 +8,10 @@
 #include "Function.h"
 #include "Deinterleave.h"
 
+//added by nick
+#include "Simplify.h"
+#include <cstdio>
+
 #include <llvm/Config/config.h>
 
 #include <llvm/Analysis/Verifier.h>
@@ -846,8 +850,71 @@ Value *CodeGen::codegen_buffer_pointer(string buffer, Halide::Type type, Value *
     return builder->CreateGEP(base_address, index);
 }
 
+Expr extract_ramp_helper(const Expr op, int *n_ramps) {
+    //IRPrinter irp = IRPrinter(std::cout);
+    const Add *asAdd = op.as<Add>();
+    const Sub *asSub = op.as<Sub>();
+    const Mul *asMul = op.as<Mul>();
+    const Max *asMax = op.as<Max>();
+    const Min *asMin = op.as<Min>();
+    const Ramp *asRamp = op.as<Ramp>();
+    Expr ret, a, b;
+    int n_ramps_a = 0, n_ramps_b = 0;
+    if (asAdd) {
+        // add
+        ret = new Add(extract_ramp_helper(asAdd->a, &n_ramps_a),
+                      extract_ramp_helper(asAdd->b, &n_ramps_b));
+    } else if (asSub) {
+        // subtract
+        ret = new Sub(extract_ramp_helper(asSub->a, &n_ramps_a),
+                      extract_ramp_helper(asSub->b, &n_ramps_b));
+    } else if (asMul) {
+        // multiply - don't keep the n_ramps
+        ret = new Mul(extract_ramp_helper(asMul->a, NULL),
+                      extract_ramp_helper(asMul->b, NULL));        
+    } else if (asMax) {
+        // max - if a or b has ramp, replace
+        a = extract_ramp_helper(asMax->a, &n_ramps_a);
+        b = extract_ramp_helper(asMax->b, &n_ramps_b);
+        if ((n_ramps_a == 1) && (n_ramps_b==0)) ret = a;
+        else if ((n_ramps_b == 1) && (n_ramps_b==1)) ret = b;
+        else ret = new Max(a, b);
+    } else if (asMin) {
+        // min - if a or b has ramp, replace
+        a = extract_ramp_helper(asMin->a, &n_ramps_a);
+        b = extract_ramp_helper(asMin->b, &n_ramps_b);
+        if ((n_ramps_a == 1) && (n_ramps_b==0)) ret = a;
+        else if ((n_ramps_b == 1) && (n_ramps_b==1)) ret = b;
+        else ret = new Min(a, b);
+    } else if (asRamp) {
+        // replace ramp with base (for now)
+        ret = op;
+        n_ramps_a = 1;
+    } else {
+        ret = op;
+    }
+    if (n_ramps) *n_ramps = *n_ramps + n_ramps_a + n_ramps_b;
+    return ret;
+}
+
+Expr extract_ramp(const Expr index) {
+    int n_ramps = 0;
+    Expr extracted = extract_ramp_helper(index, &n_ramps);
+    printf("num ramps is %d\n", n_ramps);
+    if (n_ramps==1) return extracted;
+    else return index;
+}
+
 void CodeGen::visit(const Load *op) {
     // There are several cases. Different architectures may wish to override some
+
+    IRPrinter irp = IRPrinter(std::cout);
+    printf("initial index: "); irp.print(op->index); printf("\n");
+    Expr new_base = extract_ramp(op->index);
+    printf("with conditions met: "); irp.print(new_base); printf("\n");
+    Expr simplified = simplify(new_base);
+    printf("simplified: "); irp.print(simplified); printf("\n");
+    printf("\n");
 
     if (op->type.is_scalar()) {
         // Scalar loads
