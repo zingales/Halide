@@ -14,7 +14,7 @@ int main(int argc, char **argv) {
 #elif 0
     f(x, y) = 5;
     g(x, y) = f(x+5,y+17);
-#elif 0
+#elif 1
     f(x) = 5;
     g(x) = f(clamp(x, -3, 7));
 #elif 1
@@ -55,8 +55,8 @@ int main(int argc, char **argv) {
 #endif
     f.compute_root(); //vectorize(x,2);
     g.vectorize(x, 4);
-    g.compile_to_assembly("/tmp/simple_asm2.s", {});
-    g.compile_to_bitcode("/tmp/simple_asm2.bc", {});
+    g.compile_to_assembly("/tmp/simple_asm_cvl.s", {});
+    //g.compile_to_bitcode("/tmp/simple_asm2.bc", {});
 
 
     printf("Success!\n");

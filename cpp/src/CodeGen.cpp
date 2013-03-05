@@ -1,3 +1,5 @@
+#define ENABLE_CLAMPED_VECTOR_LD 1
+
 #include <iostream>
 #include "IRPrinter.h"
 #include "CodeGen.h"
@@ -1041,7 +1043,7 @@ void CodeGen::create_load(const Load *op, bool recurse) {
 	    new_index = simplify(new_index);
 	    printf("simplified: "); irp.print(new_index); printf("\n");
 
-	    if (recurse && new_index.as<Ramp>()) {
+	    if (ENABLE_CLAMPED_VECTOR_LD && recurse && new_index.as<Ramp>()) {
 		Expr low_bound = new EQ(extract_ramp_condition(op->index, NULL, true, true),
 					extract_ramp_condition(op->index, NULL, true, false));
 		printf("low bound: "); irp.print(low_bound); printf("\n");
@@ -1058,15 +1060,36 @@ void CodeGen::create_load(const Load *op, bool recurse) {
 		printf("simplified condition: "); irp.print(condition); printf("\n");
 		Load simplified_load = Load(op->type, op->name, new_index,
 					    op->image, op->param);
+
+		Value *condition_val = codegen(condition);
+		
+		// create the block for the bounded case
+		BasicBlock *bounded_bb = BasicBlock::Create(context, op->name + "_bounded_load",
+							    function);
+		// create the block for the unbounded case
+		BasicBlock *unbounded_bb = BasicBlock::Create(context, op->name + "_unbounded_load",
+							      function);
+		BasicBlock *after_bb = BasicBlock::Create(context, op->name + "_after_load",
+							  function);
+		builder->CreateCondBr(condition_val, bounded_bb, unbounded_bb);
+
+		builder->SetInsertPoint(bounded_bb);
 		value = NULL;
 		create_load(&simplified_load, false);
 		Value *bounded = value;
+		builder->CreateBr(after_bb);
+
+		builder->SetInsertPoint(unbounded_bb);
 		value = NULL;
 		create_load(op, false);
 		Value *unbounded = value;
-		Value *condition_val = codegen(condition);
-		if (bounded && unbounded && condition_val) printf("yay!!!!!");
-		value = unbounded; // did not make recursive call, fell through
+		builder->CreateBr(after_bb);
+
+		builder->SetInsertPoint(after_bb);
+		PHINode *phi = builder->CreatePHI(value->getType(),2);
+		phi->addIncoming(bounded, bounded_bb);
+		phi->addIncoming(unbounded, unbounded_bb);
+		value = phi;
 	    } else {
 		// 5) General gathers
 		Value *index = codegen(op->index);
