@@ -1060,33 +1060,41 @@ void CodeGen::create_load(const Load *op, bool recurse) {
 		printf("simplified condition: "); irp.print(condition); printf("\n");
 		Load simplified_load = Load(op->type, op->name, new_index,
 					    op->image, op->param);
-
+		
+		// Make condition
 		Value *condition_val = codegen(condition);
 		
-		// create the block for the bounded case
+		// Create the block for the bounded case
 		BasicBlock *bounded_bb = BasicBlock::Create(context, op->name + "_bounded_load",
 							    function);
-		// create the block for the unbounded case
+		// Create the block for the unbounded case
 		BasicBlock *unbounded_bb = BasicBlock::Create(context, op->name + "_unbounded_load",
 							      function);
+		// Create the block that comes after
 		BasicBlock *after_bb = BasicBlock::Create(context, op->name + "_after_load",
 							  function);
+
+		// Check the bounds, branch accordingly
 		builder->CreateCondBr(condition_val, bounded_bb, unbounded_bb);
 
+		// For bounded case, use ramp
 		builder->SetInsertPoint(bounded_bb);
 		value = NULL;
 		create_load(&simplified_load, false);
 		Value *bounded = value;
 		builder->CreateBr(after_bb);
 
+		// For unbounded case, create_load will fall through to general gather
+		// (with recurse set to false)
 		builder->SetInsertPoint(unbounded_bb);
 		value = NULL;
 		create_load(op, false);
 		Value *unbounded = value;
 		builder->CreateBr(after_bb);
 
+		// Make a phi node
 		builder->SetInsertPoint(after_bb);
-		PHINode *phi = builder->CreatePHI(value->getType(),2);
+		PHINode *phi = builder->CreatePHI(unbounded->getType(),2);
 		phi->addIncoming(bounded, bounded_bb);
 		phi->addIncoming(unbounded, unbounded_bb);
 		value = phi;
