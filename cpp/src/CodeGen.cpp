@@ -988,6 +988,7 @@ Expr extract_ramp(const Expr index) {
 }
 
 Expr extract_ramp_condition(const Expr op, int *n_ramps, bool replace_max) {
+    // TODO: doesn't check for nested min/maxes around ramp
     const Add *asAdd = op.as<Add>();
     const Sub *asSub = op.as<Sub>();
     const Mul *asMul = op.as<Mul>();
@@ -1021,7 +1022,7 @@ Expr extract_ramp_condition(const Expr op, int *n_ramps, bool replace_max) {
     } else if (asMax) {
         a = extract_ramp_condition(asMax->a, &n_ramps_a, replace_max);
         b = extract_ramp_condition(asMax->b, &n_ramps_b, replace_max);
-	// if replacing max, replace with appropriate LE
+	// if replacing max, replace with appropriate GE
 	if (replace_max && n_ramps_a==1 && n_ramps_b==0) ret = new GE(a, b);
 	else if (replace_max && n_ramps_a==0 && n_ramps_b==1) ret = new GE(b, a);
 	else if (n_ramps_a==1 && n_ramps_b==0) ret = a;
