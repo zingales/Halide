@@ -775,7 +775,33 @@ class Simplify : public IRMutator {
                    equal(mul_a->b, mul_b->b)) {
             // Divide both sides by a constant
             expr = mutate(mul_a->a < mul_b->a);
-        } else if (a.same_as(op->a) && b.same_as(op->b)) {
+	} else if (is_simple_const(b) && add_a && (is_simple_const(add_a->a) || 
+						      is_simple_const(add_a->b))) {
+	    // Combine constants appearing on both sides (for add)
+	    // (a + const1) < const2 -> a < (const2 - const1)
+	    if (is_simple_const(add_a->a)) expr = mutate(add_a->b < b - add_a->a);
+	    else expr = mutate(add_a->a < b - add_a->b);
+	} else if (is_simple_const(a) && add_b && (is_simple_const(add_b->a) || 
+						      is_simple_const(add_b->b))) {
+	    // Combine constants appearing on both sides (for add)
+	    // const1 < (b + const2) -> (const1 - const2) < b
+	    if (is_simple_const(add_b->a)) expr = mutate(a - add_b->a < add_b->b);
+	    else expr = mutate(a - add_b->b < add_b->a);
+	} else if (is_simple_const(b) && sub_a && (is_simple_const(sub_a->a) || 
+						      is_simple_const(sub_a->b))) {
+	    // Combine constants appearing on both sides (for subtract)
+	    // (const1 - a) < const2 -> const1 - const2 < a
+	    if (is_simple_const(sub_a->a)) expr = mutate(sub_a->a - b < sub_a->b);
+	    // (a - const1) < const2 -> a < (const2 + const1)
+	    else expr = mutate(sub_a->a < b + sub_a->b);
+	} else if (is_simple_const(a) && sub_b && (is_simple_const(sub_b->a) || 
+						      is_simple_const(sub_b->b))) {
+	    // Combine constants appearing on both sides (for subtract)
+	    // const1 < (const2 - b) -> b < const2 - const1
+	    if (is_simple_const(sub_b->a)) expr = mutate(sub_b->b < sub_b->a - a);
+	    // const1 < (b - const2) -> const1 + const2 < b
+	    else expr = mutate(a + sub_b->b < sub_b->a);
+	} else if (a.same_as(op->a) && b.same_as(op->b)) {
             expr = op;
         } else {
             expr = new LT(a, b);
