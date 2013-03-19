@@ -99,7 +99,7 @@ void CodeGen_ARM::compile(Stmt stmt, string name, const vector<Argument> &args) 
 
     // Fix the target triple. The initial module was probably compiled for x86
     log(1) << "Target triple of initial module: " << module->getTargetTriple() << "\n";
-    module->setTargetTriple("arm-linux-eabi");
+    module->setTargetTriple("arm-linux-gnueabihf");
     log(1) << "Target triple of initial module: " << module->getTargetTriple() << "\n";        
 
     // Pass to the generic codegen
@@ -204,6 +204,7 @@ Value *CodeGen_ARM::call_intrin(llvm::Type *result_type,
         fn->setCallingConv(CallingConv::C);
     }
 
+    log(4) << "Creating call to " << name << "\n";
     return builder->CreateCall(fn, arg_values, name);
 }
  
@@ -233,6 +234,7 @@ void CodeGen_ARM::call_void_intrin(const string &name, vector<Value *> arg_value
         fn->setCallingConv(CallingConv::C);
     }
 
+    log(4) << "Creating call to " << name << "\n";
     builder->CreateCall(fn, arg_values);    
 }
 
@@ -243,96 +245,112 @@ void CodeGen_ARM::visit(const Cast *op) {
     struct Pattern {
         string intrin;
         Expr pattern;
-        bool shift;
+        int type;
     };
 
+    const int Simple = 0, LeftShift = 1, RightShift = 2;
+
     Pattern patterns[] = {
-        {"vaddhn.v8i8", _i8((wild_i16x8 + wild_i16x8)/256), false},
-        {"vaddhn.v4i16", _i16((wild_i32x4 + wild_i32x4)/65536), false},
-        {"vaddhn.v8i8", _u8((wild_u16x8 + wild_u16x8)/256), false},
-        {"vaddhn.v4i16", _u16((wild_u32x4 + wild_u32x4)/65536), false},
-        {"vsubhn.v8i8", _i8((wild_i16x8 - wild_i16x8)/256), false},
-        {"vsubhn.v4i16", _i16((wild_i32x4 - wild_i32x4)/65536), false},
-        {"vsubhn.v8i8", _u8((wild_u16x8 - wild_u16x8)/256), false},
-        {"vsubhn.v4i16", _u16((wild_u32x4 - wild_u32x4)/65536), false},
-        {"vrhadds.v8i8", _i8((_i16(wild_i8x8) + _i16(wild_i8x8) + 1)/2), false},
-        {"vrhaddu.v8i8", _u8((_u16(wild_u8x8) + _u16(wild_u8x8) + 1)/2), false},
-        {"vrhadds.v4i16", _i16((_i32(wild_i16x4) + _i32(wild_i16x4) + 1)/2), false},
-        {"vrhaddu.v4i16", _u16((_u32(wild_u16x4) + _u32(wild_u16x4) + 1)/2), false},
-        {"vrhadds.v2i32", _i32((_i64(wild_i32x2) + _i64(wild_i32x2) + 1)/2), false},
-        {"vrhaddu.v2i32", _u32((_u64(wild_u32x2) + _u64(wild_u32x2) + 1)/2), false},
-        {"vrhadds.v16i8",   _i8((_i16(wild_i8x16) + _i16(wild_i8x16) + 1)/2), false},
-        {"vrhaddu.v16i8",   _u8((_u16(wild_u8x16) + _u16(wild_u8x16) + 1)/2), false},
-        {"vrhadds.v8i16", _i16((_i32(wild_i16x8) + _i32(wild_i16x8) + 1)/2), false},
-        {"vrhaddu.v8i16", _u16((_u32(wild_u16x8) + _u32(wild_u16x8) + 1)/2), false},
-        {"vrhadds.v4i32", _i32((_i64(wild_i32x4) + _i64(wild_i32x4) + 1)/2), false},
-        {"vrhaddu.v4i32", _u32((_u64(wild_u32x4) + _u64(wild_u32x4) + 1)/2), false},
+        {"vaddhn.v8i8", _i8((wild_i16x8 + wild_i16x8)/256), Simple},
+        {"vaddhn.v4i16", _i16((wild_i32x4 + wild_i32x4)/65536), Simple},
+        {"vaddhn.v8i8", _u8((wild_u16x8 + wild_u16x8)/256), Simple},
+        {"vaddhn.v4i16", _u16((wild_u32x4 + wild_u32x4)/65536), Simple},
+        {"vsubhn.v8i8", _i8((wild_i16x8 - wild_i16x8)/256), Simple},
+        {"vsubhn.v4i16", _i16((wild_i32x4 - wild_i32x4)/65536), Simple},
+        {"vsubhn.v8i8", _u8((wild_u16x8 - wild_u16x8)/256), Simple},
+        {"vsubhn.v4i16", _u16((wild_u32x4 - wild_u32x4)/65536), Simple},
+        {"vrhadds.v8i8", _i8((_i16(wild_i8x8) + _i16(wild_i8x8) + 1)/2), Simple},
+        {"vrhaddu.v8i8", _u8((_u16(wild_u8x8) + _u16(wild_u8x8) + 1)/2), Simple},
+        {"vrhadds.v4i16", _i16((_i32(wild_i16x4) + _i32(wild_i16x4) + 1)/2), Simple},
+        {"vrhaddu.v4i16", _u16((_u32(wild_u16x4) + _u32(wild_u16x4) + 1)/2), Simple},
+        {"vrhadds.v2i32", _i32((_i64(wild_i32x2) + _i64(wild_i32x2) + 1)/2), Simple},
+        {"vrhaddu.v2i32", _u32((_u64(wild_u32x2) + _u64(wild_u32x2) + 1)/2), Simple},
+        {"vrhadds.v16i8",   _i8((_i16(wild_i8x16) + _i16(wild_i8x16) + 1)/2), Simple},
+        {"vrhaddu.v16i8",   _u8((_u16(wild_u8x16) + _u16(wild_u8x16) + 1)/2), Simple},
+        {"vrhadds.v8i16", _i16((_i32(wild_i16x8) + _i32(wild_i16x8) + 1)/2), Simple},
+        {"vrhaddu.v8i16", _u16((_u32(wild_u16x8) + _u32(wild_u16x8) + 1)/2), Simple},
+        {"vrhadds.v4i32", _i32((_i64(wild_i32x4) + _i64(wild_i32x4) + 1)/2), Simple},
+        {"vrhaddu.v4i32", _u32((_u64(wild_u32x4) + _u64(wild_u32x4) + 1)/2), Simple},
 
-        {"vhadds.v8i8", _i8((_i16(wild_i8x8) + _i16(wild_i8x8))/2), false},
-        {"vhaddu.v8i8", _u8((_u16(wild_u8x8) + _u16(wild_u8x8))/2), false},
-        {"vhadds.v4i16", _i16((_i32(wild_i16x4) + _i32(wild_i16x4))/2), false},
-        {"vhaddu.v4i16", _u16((_u32(wild_u16x4) + _u32(wild_u16x4))/2), false},
-        {"vhadds.v2i32", _i32((_i64(wild_i32x2) + _i64(wild_i32x2))/2), false},
-        {"vhaddu.v2i32", _u32((_u64(wild_u32x2) + _u64(wild_u32x2))/2), false},
-        {"vhadds.v16i8", _i8((_i16(wild_i8x16) + _i16(wild_i8x16))/2), false},
-        {"vhaddu.v16i8", _u8((_u16(wild_u8x16) + _u16(wild_u8x16))/2), false},
-        {"vhadds.v8i16", _i16((_i32(wild_i16x8) + _i32(wild_i16x8))/2), false},
-        {"vhaddu.v8i16", _u16((_u32(wild_u16x8) + _u32(wild_u16x8))/2), false},
-        {"vhadds.v4i32", _i32((_i64(wild_i32x4) + _i64(wild_i32x4))/2), false},
-        {"vhaddu.v4i32", _u32((_u64(wild_u32x4) + _u64(wild_u32x4))/2), false},
-        {"vhsubs.v8i8", _i8((_i16(wild_i8x8) - _i16(wild_i8x8))/2), false},
-        {"vhsubu.v8i8", _u8((_u16(wild_u8x8) - _u16(wild_u8x8))/2), false},
-        {"vhsubs.v4i16", _i16((_i32(wild_i16x4) - _i32(wild_i16x4))/2), false},
-        {"vhsubu.v4i16", _u16((_u32(wild_u16x4) - _u32(wild_u16x4))/2), false},
-        {"vhsubs.v2i32", _i32((_i64(wild_i32x2) - _i64(wild_i32x2))/2), false},
-        {"vhsubu.v2i32", _u32((_u64(wild_u32x2) - _u64(wild_u32x2))/2), false},
-        {"vhsubs.v16i8", _i8((_i16(wild_i8x16) - _i16(wild_i8x16))/2), false},
-        {"vhsubu.v16i8", _u8((_u16(wild_u8x16) - _u16(wild_u8x16))/2), false},
-        {"vhsubs.v8i16", _i16((_i32(wild_i16x8) - _i32(wild_i16x8))/2), false},
-        {"vhsubu.v8i16", _u16((_u32(wild_u16x8) - _u32(wild_u16x8))/2), false},
-        {"vhsubs.v4i32", _i32((_i64(wild_i32x4) - _i64(wild_i32x4))/2), false},
-        {"vhsubu.v4i32", _u32((_u64(wild_u32x4) - _u64(wild_u32x4))/2), false},
+        {"vhadds.v8i8", _i8((_i16(wild_i8x8) + _i16(wild_i8x8))/2), Simple},
+        {"vhaddu.v8i8", _u8((_u16(wild_u8x8) + _u16(wild_u8x8))/2), Simple},
+        {"vhadds.v4i16", _i16((_i32(wild_i16x4) + _i32(wild_i16x4))/2), Simple},
+        {"vhaddu.v4i16", _u16((_u32(wild_u16x4) + _u32(wild_u16x4))/2), Simple},
+        {"vhadds.v2i32", _i32((_i64(wild_i32x2) + _i64(wild_i32x2))/2), Simple},
+        {"vhaddu.v2i32", _u32((_u64(wild_u32x2) + _u64(wild_u32x2))/2), Simple},
+        {"vhadds.v16i8", _i8((_i16(wild_i8x16) + _i16(wild_i8x16))/2), Simple},
+        {"vhaddu.v16i8", _u8((_u16(wild_u8x16) + _u16(wild_u8x16))/2), Simple},
+        {"vhadds.v8i16", _i16((_i32(wild_i16x8) + _i32(wild_i16x8))/2), Simple},
+        {"vhaddu.v8i16", _u16((_u32(wild_u16x8) + _u32(wild_u16x8))/2), Simple},
+        {"vhadds.v4i32", _i32((_i64(wild_i32x4) + _i64(wild_i32x4))/2), Simple},
+        {"vhaddu.v4i32", _u32((_u64(wild_u32x4) + _u64(wild_u32x4))/2), Simple},
+        {"vhsubs.v8i8", _i8((_i16(wild_i8x8) - _i16(wild_i8x8))/2), Simple},
+        {"vhsubu.v8i8", _u8((_u16(wild_u8x8) - _u16(wild_u8x8))/2), Simple},
+        {"vhsubs.v4i16", _i16((_i32(wild_i16x4) - _i32(wild_i16x4))/2), Simple},
+        {"vhsubu.v4i16", _u16((_u32(wild_u16x4) - _u32(wild_u16x4))/2), Simple},
+        {"vhsubs.v2i32", _i32((_i64(wild_i32x2) - _i64(wild_i32x2))/2), Simple},
+        {"vhsubu.v2i32", _u32((_u64(wild_u32x2) - _u64(wild_u32x2))/2), Simple},
+        {"vhsubs.v16i8", _i8((_i16(wild_i8x16) - _i16(wild_i8x16))/2), Simple},
+        {"vhsubu.v16i8", _u8((_u16(wild_u8x16) - _u16(wild_u8x16))/2), Simple},
+        {"vhsubs.v8i16", _i16((_i32(wild_i16x8) - _i32(wild_i16x8))/2), Simple},
+        {"vhsubu.v8i16", _u16((_u32(wild_u16x8) - _u32(wild_u16x8))/2), Simple},
+        {"vhsubs.v4i32", _i32((_i64(wild_i32x4) - _i64(wild_i32x4))/2), Simple},
+        {"vhsubu.v4i32", _u32((_u64(wild_u32x4) - _u64(wild_u32x4))/2), Simple},
 
-        {"vqadds.v8i8", _i8q(_i16(wild_i8x8) + _i16(wild_i8x8)), false},
-        {"vqaddu.v8i8", _u8q(_u16(wild_u8x8) + _u16(wild_u8x8)), false},
-        {"vqadds.v4i16", _i16q(_i32(wild_i16x4) + _i32(wild_i16x4)), false},
-        {"vqaddu.v4i16", _u16q(_u32(wild_u16x4) + _u32(wild_u16x4)), false},
-        {"vqadds.v16i8", _i8q(_i16(wild_i8x16) + _i16(wild_i8x16)), false},
-        {"vqaddu.v16i8", _u8q(_u16(wild_u8x16) + _u16(wild_u8x16)), false},
-        {"vqadds.v8i16", _i16q(_i32(wild_i16x8) + _i32(wild_i16x8)), false},
-        {"vqaddu.v8i16", _u16q(_u32(wild_u16x8) + _u32(wild_u16x8)), false},
+        {"vqadds.v8i8", _i8q(_i16(wild_i8x8) + _i16(wild_i8x8)), Simple},
+        {"vqaddu.v8i8", _u8q(_u16(wild_u8x8) + _u16(wild_u8x8)), Simple},
+        {"vqadds.v4i16", _i16q(_i32(wild_i16x4) + _i32(wild_i16x4)), Simple},
+        {"vqaddu.v4i16", _u16q(_u32(wild_u16x4) + _u32(wild_u16x4)), Simple},
+        {"vqadds.v16i8", _i8q(_i16(wild_i8x16) + _i16(wild_i8x16)), Simple},
+        {"vqaddu.v16i8", _u8q(_u16(wild_u8x16) + _u16(wild_u8x16)), Simple},
+        {"vqadds.v8i16", _i16q(_i32(wild_i16x8) + _i32(wild_i16x8)), Simple},
+        {"vqaddu.v8i16", _u16q(_u32(wild_u16x8) + _u32(wild_u16x8)), Simple},
 
         // N.B. Saturating subtracts of unsigned types are expressed
         // by widening to a *signed* type
-        {"vqsubs.v8i8", _i8q(_i16(wild_i8x8) - _i16(wild_i8x8)), false},
-        {"vqsubu.v8i8", _u8q(_i16(wild_u8x8) - _i16(wild_u8x8)), false},
-        {"vqsubs.v4i16", _i16q(_i32(wild_i16x4) - _i32(wild_i16x4)), false},
-        {"vqsubu.v4i16", _u16q(_i32(wild_u16x4) - _i32(wild_u16x4)), false},
-        {"vqsubs.v16i8", _i8q(_i16(wild_i8x16) - _i16(wild_i8x16)), false},
-        {"vqsubu.v16i8", _u8q(_i16(wild_u8x16) - _i16(wild_u8x16)), false},
-        {"vqsubs.v8i16", _i16q(_i32(wild_i16x8) - _i32(wild_i16x8)), false},
-        {"vqsubu.v8i16", _u16q(_i32(wild_u16x8) - _i32(wild_u16x8)), false},
+        {"vqsubs.v8i8", _i8q(_i16(wild_i8x8) - _i16(wild_i8x8)), Simple},
+        {"vqsubu.v8i8", _u8q(_i16(wild_u8x8) - _i16(wild_u8x8)), Simple},
+        {"vqsubs.v4i16", _i16q(_i32(wild_i16x4) - _i32(wild_i16x4)), Simple},
+        {"vqsubu.v4i16", _u16q(_i32(wild_u16x4) - _i32(wild_u16x4)), Simple},
+        {"vqsubs.v16i8", _i8q(_i16(wild_i8x16) - _i16(wild_i8x16)), Simple},
+        {"vqsubu.v16i8", _u8q(_i16(wild_u8x16) - _i16(wild_u8x16)), Simple},
+        {"vqsubs.v8i16", _i16q(_i32(wild_i16x8) - _i32(wild_i16x8)), Simple},
+        {"vqsubu.v8i16", _u16q(_i32(wild_u16x8) - _i32(wild_u16x8)), Simple},
 
-        {"vqmovns.v8i8", _i8q(wild_i16x8), false},
-        {"vqmovns.v4i16", _i16q(wild_i32x4), false},
-        {"vqmovnu.v8i8", _u8q(wild_u16x8), false},
-        {"vqmovnu.v4i16", _u16q(wild_u32x4), false},
-        {"vqmovnsu.v8i8", _u8q(wild_i16x8), false},
-        {"vqmovnsu.v4i16", _u16q(wild_i32x4), false},
+        {"vshiftn.v8i8", _i8(wild_i16x8/wild_i16x8), RightShift},
+        {"vshiftn.v4i16", _i16(wild_i32x4/wild_i32x4), RightShift},
+        {"vshiftn.v2i32", _i32(wild_i64x2/wild_i64x2), RightShift},
+        {"vshiftn.v8i8", _u8(wild_u16x8/wild_u16x8), RightShift},
+        {"vshiftn.v4i16", _u16(wild_u32x4/wild_u32x4), RightShift},
+        {"vshiftn.v2i32", _u32(wild_u64x2/wild_u64x2), RightShift},
 
-        {"vshiftn.v8i8", _i8(wild_i16x8/wild_i16x8), true},
-        {"vshiftn.v4i16", _i16(wild_i32x4/wild_i32x4), true},
-        {"vshiftn.v2i32", _i32(wild_i64x2/wild_i64x2), true},
-        {"vshiftn.v8i8", _u8(wild_u16x8/wild_u16x8), true},
-        {"vshiftn.v4i16", _u16(wild_u32x4/wild_u32x4), true},
-        {"vshiftn.v2i32", _u32(wild_u64x2/wild_u64x2), true},
+        {"vqshiftns.v8i8", _i8q(wild_i16x8/wild_i16x8), RightShift},
+        {"vqshiftns.v4i16", _i16q(wild_i32x4/wild_i32x4), RightShift},
+        {"vqshiftnu.v8i8", _u8q(wild_u16x8/wild_u16x8), RightShift},
+        {"vqshiftnu.v4i16", _u16q(wild_u32x4/wild_u32x4), RightShift},
+        {"vqshiftnsu.v8i8", _u8q(wild_i16x8/wild_i16x8), RightShift},
+        {"vqshiftnsu.v4i16", _u16q(wild_i32x4/wild_i32x4), RightShift},
 
-        {"vqshiftns.v8i8", _i8q(wild_i16x8/wild_i16x8), true},
-        {"vqshiftns.v4i16", _i16q(wild_i32x4/wild_i32x4), true},
-        {"vqshiftnu.v8i8", _u8q(wild_u16x8/wild_u16x8), true},
-        {"vqshiftnu.v4i16", _u16q(wild_u32x4/wild_u32x4), true},
-        {"vqshiftnsu.v8i8", _u8q(wild_i16x8/wild_i16x8), true},
-        {"vqshiftnsu.v4i16", _u16q(wild_i32x4/wild_i32x4), true},
+        {"vqshifts.v8i8", _i8q(_i16(wild_i8x8)*wild_i16x8), LeftShift},
+        {"vqshifts.v4i16", _i16q(_i32(wild_i16x4)*wild_i32x4), LeftShift},
+        {"vqshiftu.v8i8", _u8q(_u16(wild_u8x8)*wild_u16x8), LeftShift},
+        {"vqshiftu.v4i16", _u16q(_u32(wild_u16x4)*wild_u32x4), LeftShift},
+        {"vqshiftsu.v8i8", _u8q(_i16(wild_i8x8)*wild_i16x8), LeftShift},
+        {"vqshiftsu.v4i16", _u16q(_i32(wild_i16x4)*wild_i32x4), LeftShift},
+        {"vqshifts.v16i8", _i8q(_i16(wild_i8x16)*wild_i16x16), LeftShift},
+        {"vqshifts.v8i16", _i16q(_i32(wild_i16x8)*wild_i32x8), LeftShift},
+        {"vqshiftu.v16i8", _u8q(_u16(wild_u8x16)*wild_u16x16), LeftShift},
+        {"vqshiftu.v8i16", _u16q(_u32(wild_u16x8)*wild_u32x8), LeftShift},
+        {"vqshiftsu.v16i8", _u8q(_i16(wild_i8x16)*wild_i16x16), LeftShift},
+        {"vqshiftsu.v8i16", _u16q(_i32(wild_i16x8)*wild_i32x8), LeftShift},
+
+        {"vqmovns.v8i8", _i8q(wild_i16x8), Simple},
+        {"vqmovns.v4i16", _i16q(wild_i32x4), Simple},
+        {"vqmovnu.v8i8", _u8q(wild_u16x8), Simple},
+        {"vqmovnu.v4i16", _u16q(wild_u32x4), Simple},
+        {"vqmovnsu.v8i8", _u8q(wild_i16x8), Simple},
+        {"vqmovnsu.v4i16", _u16q(wild_i32x4), Simple},
+
         {"sentinel", 0}
 
     };
@@ -340,20 +358,24 @@ void CodeGen_ARM::visit(const Cast *op) {
     for (size_t i = 0; i < sizeof(patterns)/sizeof(patterns[0]); i++) {
         const Pattern &pattern = patterns[i];
         if (expr_match(pattern.pattern, op, matches)) {
-            if (pattern.shift) {
-                Expr divisor = matches[1];
+            if (pattern.type == Simple) {
+                value = call_intrin(pattern.pattern.type(), pattern.intrin, matches);
+                return;
+            } else { // must be a shift
+                Expr constant = matches[1];
                 int shift_amount;
-                bool power_of_two = is_const_power_of_two(divisor, &shift_amount);
+                bool power_of_two = is_const_power_of_two(constant, &shift_amount);
                 if (power_of_two && shift_amount < matches[0].type().bits) {
-                    Value *shift = ConstantInt::get(llvm_type_of(matches[0].type()), -shift_amount);
+                    if (pattern.type == RightShift) {
+                        shift_amount = -shift_amount;
+                    }
+                    Value *shift = ConstantInt::get(llvm_type_of(matches[0].type()), 
+                                                    shift_amount);
                     value = call_intrin(llvm_type_of(pattern.pattern.type()), 
                                         pattern.intrin, 
                                         vec(codegen(matches[0]), shift));
                     return;
                 }
-            } else {
-                value = call_intrin(pattern.pattern.type(), pattern.intrin, matches);
-                return;
             }
         }
     }
@@ -363,15 +385,23 @@ void CodeGen_ARM::visit(const Cast *op) {
 }
 
 void CodeGen_ARM::visit(const Mul *op) {  
+    // We only have peephole optimizations for int vectors for now
+    if (op->type.is_scalar() || op->type.is_float()) {
+        CodeGen::visit(op);
+        return;
+    }
+
     // If the rhs is a power of two, consider a shift
     int shift_amount = 0;
     bool power_of_two = is_const_power_of_two(op->b, &shift_amount);
     const Cast *cast_a = op->a.as<Cast>();
 
-    Value *shift = NULL;
-    if (cast_a) {
-        shift = ConstantInt::get(llvm_type_of(cast_a->value.type()), shift_amount);
-    } else {
+    const Broadcast *broadcast_b = op->b.as<Broadcast>();
+    Value *shift = NULL, *wide_shift = NULL;
+    if (power_of_two) {
+        if (cast_a) {
+            wide_shift = ConstantInt::get(llvm_type_of(cast_a->value.type()), shift_amount);
+        }        
         shift = ConstantInt::get(llvm_type_of(op->type), shift_amount);
     }
 
@@ -379,27 +409,27 @@ void CodeGen_ARM::visit(const Mul *op) {
     if (power_of_two && cast_a && 
         cast_a->type == Int(16, 8) && cast_a->value.type() == Int(8, 8)) {
         Value *lhs = codegen(cast_a->value);
-        value = call_intrin(i16x8, "vshiftls.v8i16", vec(lhs, shift));
+        value = call_intrin(i16x8, "vshiftls.v8i16", vec(lhs, wide_shift));
     } else if (power_of_two && cast_a && 
                cast_a->type == Int(32, 4) && cast_a->value.type() == Int(16, 4)) {
         Value *lhs = codegen(cast_a->value);
-        value = call_intrin(i32x4, "vshiftls.v4i32", vec(lhs, shift));
+        value = call_intrin(i32x4, "vshiftls.v4i32", vec(lhs, wide_shift));
     } else if (power_of_two && cast_a && 
                cast_a->type == Int(64, 2) && cast_a->value.type() == Int(32, 2)) {
         Value *lhs = codegen(cast_a->value);
-        value = call_intrin(i64x2, "vshiftls.v2i64", vec(lhs, shift));
+        value = call_intrin(i64x2, "vshiftls.v2i64", vec(lhs, wide_shift));
     } else if (power_of_two && cast_a && 
                cast_a->type == UInt(16, 8) && cast_a->value.type() == UInt(8, 8)) {
         Value *lhs = codegen(cast_a->value);
-        value = call_intrin(i16x8, "vshiftlu.v8i16", vec(lhs, shift));
+        value = call_intrin(i16x8, "vshiftlu.v8i16", vec(lhs, wide_shift));
     } else if (power_of_two && cast_a && 
                cast_a->type == UInt(32, 4) && cast_a->value.type() == UInt(16, 4)) {
         Value *lhs = codegen(cast_a->value);
-        value = call_intrin(i32x4, "vshiftlu.v4i32", vec(lhs, shift));
+        value = call_intrin(i32x4, "vshiftlu.v4i32", vec(lhs, wide_shift));
     } else if (power_of_two && cast_a && 
                cast_a->type == UInt(64, 2) && cast_a->value.type() == UInt(32, 2)) {
         Value *lhs = codegen(cast_a->value);
-        value = call_intrin(i64x2, "vshiftlu.v2i64", vec(lhs, shift));
+        value = call_intrin(i64x2, "vshiftlu.v2i64", vec(lhs, wide_shift));
     } else if (power_of_two && op->a.type() == Int(8, 8)) {
         // Non-widening left shifts
         Value *lhs = codegen(op->a);
@@ -443,7 +473,18 @@ void CodeGen_ARM::visit(const Mul *op) {
     } else if (power_of_two && op->a.type() == UInt(64, 2)) {
         Value *lhs = codegen(op->a);
         value = call_intrin(i64x2, "vshiftu.v2i64", vec(lhs, shift));
-    } else {
+    } else if (broadcast_b && is_const(broadcast_b->value, 3)) {        
+        // Vector multiplies by 3, 5, 7, 9 should do shift-and-add or
+        // shift-and-sub instead to reduce register pressure (the
+        // shift is an immediate)
+        value = codegen(op->a * 2 + op->a);        
+    } else if (broadcast_b && is_const(broadcast_b->value, 5)) {
+        value = codegen(op->a * 4 + op->a);
+    } else if (broadcast_b && is_const(broadcast_b->value, 7)) {
+        value = codegen(op->a * 8 - op->a);
+    } else if (broadcast_b && is_const(broadcast_b->value, 9)) {
+        value = codegen(op->a * 8 + op->a);
+    } else {      
         CodeGen::visit(op);
     }
 }
@@ -525,66 +566,61 @@ void CodeGen_ARM::visit(const Div *op) {
         Value *numerator = codegen(op->a);
         Constant *shift = ConstantInt::get(llvm_type_of(op->type), shift_amount);
         value = builder->CreateLShr(numerator, shift);
-    } else if (op->type == Int(16, 4) && const_divisor > 1 && const_divisor < 64) {
+    } else if (op->type.element_of() == Int(16) && 
+               const_divisor > 1 && const_divisor < 64) {
         int method     = IntegerDivision::table_s16[const_divisor-2][0];
         int multiplier = IntegerDivision::table_s16[const_divisor-2][1];
         int shift      = IntegerDivision::table_s16[const_divisor-2][2];        
 
-        Value *val = codegen(op->a);
-        
+        Expr e = op->a;
+
         // Start with multiply and keep high half
-        Value *mult;
         if (multiplier != 0) {
-            mult = codegen(cast(op->type, multiplier));
-            mult = call_intrin(i32x4, "vmulls.v4i32", vec(val, mult));
-            Value *sixteen = ConstantVector::getSplat(4, ConstantInt::get(i32, -16));
-            mult = call_intrin(i16x4, "vshiftn.v4i16", vec(mult, sixteen));
+            Type wider = Int(32, op->type.width);
+            e = cast(op->type, (cast(wider, e) * multiplier)/65536);
 
             // Possibly add a correcting factor
             if (method == 1) {
-                mult = builder->CreateAdd(mult, val);
+                e += op->a;
             }
-        } else {
-            mult = val;
         }
 
         // Do the shift
-        Value *sh;
         if (shift) {
-            sh = codegen(cast(op->type, shift));
-            mult = builder->CreateAShr(mult, sh);
+            e /= (1 << shift);
         }
 
         // Add one for negative numbers
-        sh = codegen(cast(op->type, op->type.bits - 1));
+        Value *val = codegen(e);
+        Value *sh = codegen(cast(op->type, op->type.bits - 1));
         Value *sign_bit = builder->CreateLShr(val, sh);
-        value = builder->CreateAdd(mult, sign_bit);
-    } else if (op->type == UInt(16, 8) && const_divisor > 1 && const_divisor < 64) {
+        value = builder->CreateAdd(val, sign_bit);
+    } else if (op->type.element_of() == UInt(16) && 
+               const_divisor > 1 && const_divisor < 64) {
         int method     = IntegerDivision::table_u16[const_divisor-2][0];
         int multiplier = IntegerDivision::table_u16[const_divisor-2][1];
         int shift      = IntegerDivision::table_u16[const_divisor-2][2];        
 
-        Value *val = codegen(op->a);
+        Expr e = op->a;
         
         // Start with multiply and keep high half
-        Value *mult = val;
         if (method > 0) {
-            mult = codegen(cast(op->type, multiplier));
-            mult = call_intrin(i32x4, "vmullu.v4i32", vec(val, mult));
-            Value *sixteen = ConstantVector::getSplat(4, ConstantInt::get(i32, -16));
-            mult = call_intrin(i16x4, "vshiftn.v4i16", vec(mult, sixteen));
+            Type wider = UInt(32, op->type.width);
+            e = cast(op->type, (cast(wider, e) * multiplier)/65536);
 
             // Possibly add a correcting factor
             if (method == 2) {
-                Value *correction = builder->CreateSub(val, mult);
-                correction = builder->CreateLShr(correction, codegen(make_one(op->type)));
-                mult = builder->CreateAdd(mult, correction);
+                e += (op->a - e) / 2;
             }
         }
 
+        log(4) << "Performing shift\n";
         // Do the shift
-        Value *sh = codegen(cast(op->type, shift));
-        value = builder->CreateLShr(mult, sh);
+        if (shift) {
+            e /= (1 << shift);
+        }
+
+        value = codegen(e);
 
     } else {        
 
@@ -763,6 +799,13 @@ void CodeGen_ARM::visit(const Store *op) {
     // A dense store of an interleaving can be done using a vst2 intrinsic
     const Call *call = op->value.as<Call>();
     const Ramp *ramp = op->index.as<Ramp>();
+    
+    // We only deal with ramps here
+    if (!ramp) {
+        CodeGen::visit(op);
+        return;
+    }
+
     if (ramp && is_one(ramp->stride) && 
         call && call->name == "interleave vectors") {
         assert(call->args.size() == 2 && "Wrong number of args to interleave vectors");
@@ -800,73 +843,134 @@ void CodeGen_ARM::visit(const Store *op) {
             CodeGen::visit(op);
         }
         return;
-    } else {
+    } 
+
+    // If the stride is one or minus one, we can deal with that using vanilla codegen
+    const IntImm *stride = ramp->stride.as<IntImm>();
+    if (stride && (stride->value == 1 || stride->value == -1)) {
         CodeGen::visit(op);
+        return;
     }
+
+    // We have builtins for strided loads with fixed but unknown stride
+    ostringstream builtin;
+    builtin << "strided_store_"
+            << (op->value.type().is_float() ? 'f' : 'i')
+            << op->value.type().bits 
+            << 'x' << op->value.type().width;
+
+    llvm::Function *fn = module->getFunction(builtin.str());
+    if (fn) {
+        Value *base = codegen_buffer_pointer(op->name, op->value.type().element_of(), codegen(ramp->base));
+        Value *stride = codegen(ramp->stride * (op->value.type().bits / 8));
+        Value *val = codegen(op->value);
+	log(4) << "Creating call to " << builtin.str() << "\n";
+        builder->CreateCall(fn, vec(base, stride, val));
+        return;
+    }
+
+    CodeGen::visit(op);
+
 }
 
 void CodeGen_ARM::visit(const Load *op) {
     const Ramp *ramp = op->index.as<Ramp>();
 
-    // strided loads (vld2)
-    if (ramp && is_two(ramp->stride)) {
+    // We only deal with ramps here
+    if (!ramp) {
+        CodeGen::visit(op);
+        return;
+    }
+
+    const IntImm *stride = ramp ? ramp->stride.as<IntImm>() : NULL;
+
+    // If the stride is one or minus one, we can deal with that using vanilla codegen
+    if (stride && (stride->value == 1 || stride->value == -1)) {
+        CodeGen::visit(op);
+        return;
+    }
+
+    // Strided loads with known stride
+    if (stride && stride->value >= 2 && stride->value <= 4) {
         // Check alignment on the base. 
         Expr base = ramp->base;
-        bool odd = false;
+        int offset = 0;
         ModulusRemainder mod_rem = modulus_remainder(ramp->base);
-        if ((mod_rem.remainder & 1) && !(mod_rem.modulus & 1)) {
-            // If we can guarantee it's odd-aligned, we should round
-            // down by one in order to possibly share this vld2 with
-            // an adjacent one. (e.g. averaging down patterns like
-            // f(2*x) + f(2*x+1))
-            base = simplify(base - 1);
-            mod_rem.remainder--;
-            odd = true;
-        }
-        const Add *add = base.as<Add>();
-        if (!odd && add && is_one(add->b) && (mod_rem.modulus & 1)) {
-            // If it just ends in +1, but we can't analyze the base,
-            // it's probably still worth removing that +1 to encourage
-            // sharing.
-            base = add->a;
-            odd = true;
+
+        
+        if ((mod_rem.modulus % stride->value) == 0) {
+            offset = mod_rem.remainder % stride->value;
+            base = simplify(base - offset);
+            mod_rem.remainder -= offset;
         }
 
+        const Add *add = base.as<Add>();
+        const IntImm *add_b = add ? add->b.as<IntImm>() : NULL;
+        if ((mod_rem.modulus == 1) && add_b) {
+            offset = add_b->value % stride->value;
+            if (offset < 0) offset += stride->value;
+            base = simplify(base - offset);
+        }
+        
+
         int alignment = op->type.bits / 8;
-        alignment *= gcd(gcd(mod_rem.modulus, mod_rem.remainder), 32);
+        //alignment *= gcd(gcd(mod_rem.modulus, mod_rem.remainder), 32);
         Value *align = ConstantInt::get(i32, alignment);
 
         Value *ptr = codegen_buffer_pointer(op->name, op->type.element_of(), codegen(base));
         ptr = builder->CreatePointerCast(ptr, i8->getPointerTo());
 
-        llvm::StructType *result_type = 
-            StructType::get(context, vec(llvm_type_of(op->type),
-                                         llvm_type_of(op->type)));
-       
-        Value *pair = NULL;
+        vector<llvm::Type *> type_vec(stride->value);
+        llvm::Type *elem_type = llvm_type_of(op->type);
+        for (int i = 0; i < stride->value; i++) {
+            type_vec[i] = elem_type;
+        }
+        llvm::StructType *result_type = StructType::get(context, type_vec);
+
+        ostringstream prefix;
+        prefix << "vld" << stride->value << ".";
+        string pre = prefix.str();
+
+        Value *group = NULL;
         if (op->type == Int(8, 8) || op->type == UInt(8, 8)) {
-            pair = call_intrin(result_type, "vld2.v8i8", vec(ptr, align));
+            group = call_intrin(result_type, pre+"v8i8", vec(ptr, align));
         } else if (op->type == Int(16, 4) || op->type == UInt(16, 4)) {
-            pair = call_intrin(result_type, "vld2.v4i16", vec(ptr, align));
+            group = call_intrin(result_type, pre+"v4i16", vec(ptr, align));
         } else if (op->type == Int(32, 2) || op->type == UInt(32, 2)) {
-            pair = call_intrin(result_type, "vld2.v2i32", vec(ptr, align));
+            group = call_intrin(result_type, pre+"v2i32", vec(ptr, align));
         } else if (op->type == Float(32, 2)) {
-            pair = call_intrin(result_type, "vld2.v2f32", vec(ptr, align));
+            group = call_intrin(result_type, pre+"v2f32", vec(ptr, align));
         } else if (op->type == Int(8, 16) || op->type == UInt(8, 16)) {
-            pair = call_intrin(result_type, "vld2.v16i8", vec(ptr, align));
+            group = call_intrin(result_type, pre+"v16i8", vec(ptr, align));
         } else if (op->type == Int(16, 8) || op->type == UInt(16, 8)) {
-            pair = call_intrin(result_type, "vld2.v8i16", vec(ptr, align));
+            group = call_intrin(result_type, pre+"v8i16", vec(ptr, align));
         } else if (op->type == Int(32, 4) || op->type == UInt(32, 4)) {
-            pair = call_intrin(result_type, "vld2.v4i32", vec(ptr, align));
+            group = call_intrin(result_type, pre+"v4i32", vec(ptr, align));
         } else if (op->type == Float(32, 4)) {
-            pair = call_intrin(result_type, "vld2.v4f32", vec(ptr, align));
+            group = call_intrin(result_type, pre+"v4f32", vec(ptr, align));
         }
 
-        if (pair) {            
-            unsigned int idx = odd ? 1 : 0;
-            value = builder->CreateExtractValue(pair, vec(idx));
+        if (group) {            
+            log(4) << "Extracting element " << offset << " from resulting struct\n";
+            value = builder->CreateExtractValue(group, vec((unsigned int)offset));            
             return;
         }
+    }
+
+    // We have builtins for strided loads with fixed but unknown stride
+    ostringstream builtin;
+    builtin << "strided_load_"
+            << (op->type.is_float() ? 'f' : 'i')
+            << op->type.bits 
+            << 'x' << op->type.width;
+
+    llvm::Function *fn = module->getFunction(builtin.str());
+    if (fn) {
+        Value *base = codegen_buffer_pointer(op->name, op->type.element_of(), codegen(ramp->base));
+        Value *stride = codegen(ramp->stride * (op->type.bits / 8));
+	log(4) << "Creating call to " << builtin.str() << "\n";
+        value = builder->CreateCall(fn, vec(base, stride), builtin.str());
+        return;
     }
 
     CodeGen::visit(op);

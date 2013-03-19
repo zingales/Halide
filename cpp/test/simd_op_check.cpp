@@ -83,12 +83,12 @@ void do_job(job &j) {
 	     module, module, op, module);
 
     if (system(cmd) != 0) {
-	j.result = new char[4096];
+	j.result = new char[4099*2];
 	snprintf(j.result, 1024, "%s did not generate. Instead we got:\n", op);
 	char asmfile[1024];
 	snprintf(asmfile, 1024, "%s.s", module);
 	FILE *f = fopen(asmfile, "r");
-	const int max_size = 1024;
+	const int max_size = 4096;
 	char *buf = j.result + strlen(j.result);
 	memset(buf, 0, max_size);
 	size_t bytes_in = fread(buf, 1, max_size, f);	
@@ -115,6 +115,7 @@ void *worker(void *arg) {
     for (size_t i = n; i < jobs.size(); i += nThreads) {
 	do_job(jobs[i]);
     }
+    return NULL;
 }
 
 void do_all_jobs() {
@@ -402,12 +403,12 @@ void check_sse_all() {
 	check_sse("vroundpd", 4, round(f64_1));
 	
 	check_sse("vcmpeqpd", 4, select(f64_1 == f64_2, 1.0f, 2.0f));
-	check_sse("vcmpneqpd", 4, select(f64_1 != f64_2, 1.0f, 2.0f));
-	check_sse("vcmplepd", 4, select(f64_1 <= f64_2, 1.0f, 2.0f));
+	//check_sse("vcmpneqpd", 4, select(f64_1 != f64_2, 1.0f, 2.0f));
+	//check_sse("vcmplepd", 4, select(f64_1 <= f64_2, 1.0f, 2.0f));
 	check_sse("vcmpltpd", 4, select(f64_1 < f64_2, 1.0f, 2.0f));
 	check_sse("vcmpeqps", 8, select(f32_1 == f32_2, 1.0f, 2.0f));
-	check_sse("vcmpneqps", 8, select(f32_1 != f32_2, 1.0f, 2.0f));
-	check_sse("vcmpleps", 8, select(f32_1 <= f32_2, 1.0f, 2.0f));
+	//check_sse("vcmpneqps", 8, select(f32_1 != f32_2, 1.0f, 2.0f));
+	//check_sse("vcmpleps", 8, select(f32_1 <= f32_2, 1.0f, 2.0f));
 	check_sse("vcmpltps", 8, select(f32_1 < f32_2, 1.0f, 2.0f));
 	
 	check_sse("vblendvps", 8, select(f32_1 > 0.7f, f32_1, f32_2));
@@ -1118,27 +1119,32 @@ void check_neon_all() {
     // We use the non-rounding form of these (at worst we do an extra add)
 
     // VQSHL	I	-	Saturating Shift Left
+    // We skip the versions that we don't have constants large enough for
     check_neon("vqshl.s8", 16,  i8(clamp(i16(i8_1)*16,  min_i8,  max_i8)));
     check_neon("vqshl.s16", 8, i16(clamp(i32(i16_1)*16, min_i16, max_i16)));
-    //check_neon("vqshl.s32", 4, i32(clamp(i64(i32_1)*16, min_i32, max_i32)));
     check_neon("vqshl.s8",  8,  i8(clamp(i16(i8_1)*16,  min_i8,  max_i8)));
     check_neon("vqshl.s16", 4, i16(clamp(i32(i16_1)*16, min_i16, max_i16)));
-    //check_neon("vqshl.s32", 2, i32(clamp(i64(i32_1)*16, min_i32, max_i32)));
-    // skip the versions that we don't have constants for
+    check_neon("vqshl.u8", 16,  u8(min(u16(u8_1 )*16, max_u8)));
+    check_neon("vqshl.u16", 8, u16(min(u32(u16_1)*16, max_u16)));
+    check_neon("vqshl.u8",  8,  u8(min(u16(u8_1 )*16, max_u8)));
+    check_neon("vqshl.u16", 4, u16(min(u32(u16_1)*16, max_u16)));
 
     // VQSHLU	I	-	Saturating Shift Left Unsigned
-    check_neon("vqshlu.u8", 16,  u8(min(u16(u8_1 )*16, max_u8)));
-    check_neon("vqshlu.u16", 8, u16(min(u32(u16_1)*16, max_u16)));
-    check_neon("vqshlu.u8",  8,  u8(min(u16(u8_1 )*16, max_u8)));
-    check_neon("vqshlu.u16", 4, u16(min(u32(u16_1)*16, max_u16)));
+    check_neon("vqshlu.s8", 16,  u8(clamp(i16(i8_1)*16,  0,  max_u8)));
+    check_neon("vqshlu.s16", 8, u16(clamp(i32(i16_1)*16, 0, max_u16)));
+    check_neon("vqshlu.s8",  8,  u8(clamp(i16(i8_1)*16,  0,  max_u8)));
+    check_neon("vqshlu.s16", 4, u16(clamp(i32(i16_1)*16, 0, max_u16)));
 
     // VQSHRN	I	-	Saturating Shift Right Narrow
     // VQSHRUN	I	-	Saturating Shift Right Unsigned Narrow
     check_neon("vqshrn.s16", 8,  i8(clamp(i16_1/16, min_i8,  max_i8)));
     check_neon("vqshrn.s32", 4, i16(clamp(i32_1/16, min_i16, max_i16)));
+    check_neon("vqshrun.s16", 8,  u8(clamp(i16_1/16, 0, max_u8)));
+    check_neon("vqshrun.s32", 4, u16(clamp(i32_1/16, 0, max_u16)));
     //check_neon("vqshrn.s64", 2, i32(clamp(i64_1/16, min_i32, max_i32)));
-    check_neon("vqshrun.u16", 8,  u8(min(u16_1/16, max_u8)));
-    check_neon("vqshrun.u32", 4, u16(min(u32_1/16, max_u16)));
+    check_neon("vqshrn.u16", 8,  u8(min(u16_1/16, max_u8)));
+    check_neon("vqshrn.u32", 4, u16(min(u32_1/16, max_u16)));
+
 
     // VQSUB	I	-	Saturating Subtract
     check_neon("vqsub.s8", 16,  i8(clamp(i16(i8_1)  - i16(i8_2),  min_i8,  max_i8)));
@@ -1385,7 +1391,12 @@ int main(int argc, char **argv) {
     if (argc > 1) filter = argv[1];
     else filter = NULL;
 
-    char *target = getenv("HL_TARGET");
+    const char *target = getenv("HL_TARGET");
+
+    #ifdef __arm__
+    if (!target) target = "arm";
+    #endif
+
     use_avx = target && strstr(target, "avx");
     use_avx2 = target && strstr(target, "avx2");
     if (!target || strncasecmp(target, "x86", 3) == 0) {

@@ -17,6 +17,7 @@ template<bool, typename, typename> class IRBuilder;
 class LLVMContext;
 class Type;
 class StructType;
+class Instruction;
 }
 
 #include <map>
@@ -64,6 +65,14 @@ public:
     /** Compile to machine code stored in memory, and return some
      * functions pointers into that machine code. */
     JITCompiledModule compile_to_function_pointers();
+
+    /** What should be passed as -mcpu and -mattrs for
+     * compilation. The architecture-specific code generator should
+     * define these. */
+    // @{
+    virtual std::string mcpu() const = 0;
+    virtual std::string mattrs() const = 0;
+    // @}
 
 protected:
 
@@ -201,14 +210,6 @@ protected:
     virtual void visit(const Realize *);
     // @}
 
-
-    /** What should be passed as -mcpu and -mattrs for
-     * compilation. The architecture-specific code generator should
-     * define these. */
-    // @{
-    virtual std::string mcpu() const = 0;
-    virtual std::string mattrs() const = 0;
-    // @}
 
     /** If we have to bail out of a pipeline midway, this should
      * inject the appropriate cleanup code. */

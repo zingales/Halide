@@ -4,7 +4,6 @@
 #include "IRPrinter.h"
 #include "CodeGen.h"
 #include "IROperator.h"
-#include "Util.h"
 #include "Log.h"
 #include "CodeGen_C.h"
 #include "Function.h"
@@ -14,10 +13,15 @@
 #include "Simplify.h"
 #include <cstdio>
 
+// No msvc warnings from llvm headers please
+#ifdef _WIN32
+#pragma warning(push, 0)
+#endif
+
 #include <llvm/Config/config.h>
 
 #include <llvm/Analysis/Verifier.h>
-#include <llvm/ExecutionEngine/JIT.h>
+#include <llvm/ExecutionEngine/MCJIT.h>
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Target/TargetLibraryInfo.h>
 #include <llvm/Support/raw_ostream.h>
@@ -39,6 +43,7 @@
 #include <llvm/TargetTransformInfo.h>
 #include <llvm/DataLayout.h>
 #include <llvm/IRBuilder.h>
+#include <llvm/ExecutionEngine/JITMemoryManager.h>
 #else
 #include <llvm/IR/Value.h>
 #include <llvm/IR/Module.h>
@@ -46,6 +51,12 @@
 #include <llvm/Analysis/TargetTransformInfo.h>
 #include <llvm/IR/DataLayout.h>
 #include <llvm/IR/IRBuilder.h>
+#include <llvm/ExecutionEngine/SectionMemoryManager.h>
+#endif
+
+// No msvc warnings from llvm headers please
+#ifdef _WIN32
+#pragma warning(pop)
 #endif
 
 #include <sstream>
@@ -96,7 +107,8 @@ LLVMContext &get_global_context() {
 
 CodeGen::CodeGen() : 
     module(NULL), function(NULL), context(get_global_context()), 
-    builder(new IRBuilder<>(context)), value(NULL), buffer_t(NULL) {
+    builder(new IRBuilder<>(context)), 
+    value(NULL), buffer_t(NULL) {
     // Define some types
     void_t = llvm::Type::getVoidTy(context);
     i1 = llvm::Type::getInt1Ty(context);
@@ -111,7 +123,9 @@ CodeGen::CodeGen() :
     // Initialize the targets we want to generate code for which are enabled
     // in llvm configuration
     if (!llvm_initialized) {            
-        InitializeNativeTarget();
+	InitializeNativeTarget();
+        InitializeNativeTargetAsmPrinter();
+        InitializeNativeTargetAsmParser();
 
         #define LLVM_TARGET(target)         \
             Initialize##target##Target();   \
@@ -123,6 +137,10 @@ CodeGen::CodeGen() :
         llvm_initialized = true;
     }
 }
+
+// llvm includes above disable assert.  Include Util.h here
+// to reenable assert.
+#include "Util.h"
 
 CodeGen::~CodeGen() {
     if (module && owns_module) {
@@ -210,13 +228,13 @@ void CodeGen::compile(Stmt stmt, string name, const vector<Argument> &args) {
     llvm::Function *wrapper = llvm::Function::Create(func_t, llvm::Function::ExternalLinkage, wrapper_name, module);
     block = BasicBlock::Create(context, "entry", wrapper);
     builder->SetInsertPoint(block);
-    
+
     Value *arg_array = wrapper->arg_begin();
 
     vector<Value *> wrapper_args(args.size());
     for (size_t i = 0; i < args.size(); i++) {
         // Get the address of the nth argument
-        Value *ptr = builder->CreateConstGEP1_32(arg_array, i);
+        Value *ptr = builder->CreateConstGEP1_32(arg_array, (int)i);
         ptr = builder->CreateLoad(ptr);
         if (args[i].is_buffer) {
             // Cast the argument to a buffer_t * 
@@ -227,6 +245,7 @@ void CodeGen::compile(Stmt stmt, string name, const vector<Argument> &args) {
             wrapper_args[i] = builder->CreateLoad(ptr);
         }
     }
+    log(4) << "Creating call from wrapper to actual function\n";
     builder->CreateCall(function, wrapper_args);
     builder->CreateRetVoid();
     verifyFunction(*wrapper);
@@ -235,7 +254,10 @@ void CodeGen::compile(Stmt stmt, string name, const vector<Argument> &args) {
     verifyModule(*module);
     log(2) << "Done generating llvm bitcode\n";
 
-    if (log::debug_level >= 3) {
+    // Optimize it
+    optimize_module();
+
+    if (log::debug_level >= 2) {
         module->dump();
     }
 }
@@ -245,17 +267,51 @@ void CodeGen::compile(Stmt stmt, string name, const vector<Argument> &args) {
 class JITModuleHolder {
 public:
 	mutable RefCount ref_count;    
-    JITModuleHolder(Module *module) {
+    JITModuleHolder(Module *module, CodeGen *cg) {
         log(2) << "Creating new execution engine\n";
         string error_string;
+
+	TargetOptions options;
+	options.LessPreciseFPMADOption = true;
+	options.NoFramePointerElim = false;
+	options.NoFramePointerElimNonLeaf = false;
+	options.AllowFPOpFusion = FPOpFusion::Fast;
+	options.UnsafeFPMath = true;
+	options.NoInfsFPMath = true;
+	options.NoNaNsFPMath = true;
+	options.HonorSignDependentRoundingFPMathOption = false;
+	options.UseSoftFloat = false;
+	options.FloatABIType = FloatABI::Hard;
+	options.NoZerosInBSS = false;
+	options.GuaranteedTailCallOpt = false;
+	options.DisableTailCalls = false;
+	options.StackAlignmentOverride = 32;
+	options.RealignStack = true;
+	options.TrapFuncName = "";
+	options.PositionIndependentExecutable = true;
+	options.EnableSegmentedStacks = false;
+	options.UseInitArray = false;
+	options.SSPBufferSize = 0;
+	
         EngineBuilder engine_builder(module);
+	engine_builder.setTargetOptions(options);
         engine_builder.setErrorStr(&error_string);
         engine_builder.setEngineKind(EngineKind::JIT);
         engine_builder.setUseMCJIT(true);
-        //engine_builder.setOptLevel(CodeGenOpt::Aggressive);
+        #if defined(LLVM_VERSION_MINOR) && LLVM_VERSION_MINOR < 3
+        engine_builder.setJITMemoryManager(JITMemoryManager::CreateDefaultMemManager());
+        #else
+        engine_builder.setJITMemoryManager(new SectionMemoryManager());
+        #endif
+        engine_builder.setOptLevel(CodeGenOpt::Aggressive);
+        engine_builder.setMCPU(cg->mcpu());
+        engine_builder.setMAttrs(vec<string>(cg->mattrs()));
         execution_engine = engine_builder.create();
         if (!execution_engine) cout << error_string << endl;
         assert(execution_engine && "Couldn't create execution engine");        
+	execution_engine->finalizeObject();	
+	// TODO: I don't think this is necessary, we shouldn't have any static constructors
+	// execution_engine->runStaticConstructorsDestructors(...);
     }
     ~JITModuleHolder() {
         shutdown_thread_pool();
@@ -266,24 +322,24 @@ public:
 };
 
 template<>
-RefCount &ref_count<JITModuleHolder>(const JITModuleHolder *f) {return f->ref_count;}
+EXPORT RefCount &ref_count<JITModuleHolder>(const JITModuleHolder *f) {return f->ref_count;}
 
 template<>
-void destroy<JITModuleHolder>(const JITModuleHolder *f) {delete f;}
+EXPORT void destroy<JITModuleHolder>(const JITModuleHolder *f) {delete f;}
 
 
 JITCompiledModule CodeGen::compile_to_function_pointers() {
     assert(module && "No module defined. Must call compile before calling compile_to_function_pointer");
                
-    optimize_module();
-
     log(1) << "JIT compiling...\n";
 
-    IntrusivePtr<JITModuleHolder> module_holder(new JITModuleHolder(module));
+    IntrusivePtr<JITModuleHolder> module_holder(new JITModuleHolder(module, this));
     ExecutionEngine *execution_engine = module_holder.ptr->execution_engine;
 
     llvm::Function *fn = module->getFunction(function_name);
     assert(fn && "Could not find function inside llvm module");
+
+    compile_to_bitcode("jit.bc");
 
     JITCompiledModule m;
     void *f = execution_engine->getPointerToFunction(fn);
@@ -296,21 +352,21 @@ JITCompiledModule CodeGen::compile_to_function_pointers() {
     m.wrapped_function = (void (*)(const void **))f;
     assert(f && "Compiling wrapped function returned NULL");
 
-    llvm::Function *set_error_handler = module->getFunction("set_error_handler");
+    llvm::Function *set_error_handler = module->getFunction("halide_set_error_handler");
     assert(set_error_handler && "Could not find set_error_handler function inside llvm module");
     f = execution_engine->getPointerToFunction(set_error_handler);
     m.set_error_handler = (void (*)(JITCompiledModule::ErrorHandler))f;
     assert(f && "Compiling set_error_handler function returned NULL");
 
 
-    llvm::Function *set_custom_allocator = module->getFunction("set_custom_allocator");
+    llvm::Function *set_custom_allocator = module->getFunction("halide_set_custom_allocator");
     assert(set_custom_allocator && "Could not find set_custom_allocator function inside llvm module");
     f = execution_engine->getPointerToFunction(set_custom_allocator);
     m.set_custom_allocator = (void (*)(void *(*)(size_t), void (*)(void *)))f;
     assert(f && "Compiling set_custom_allocator function returned NULL");
 
     m.module = module_holder;
-    llvm::Function *shutdown_thread_pool = module->getFunction("shutdown_thread_pool");
+    llvm::Function *shutdown_thread_pool = module->getFunction("halide_shutdown_thread_pool");
     assert(shutdown_thread_pool && "Could not find shutdown_thread_pool function inside llvm module");    
     f = execution_engine->getPointerToFunction(shutdown_thread_pool);
     m.module.ptr->shutdown_thread_pool = (void (*)())f;
@@ -359,8 +415,6 @@ void CodeGen::compile_to_bitcode(const string &filename) {
 void CodeGen::compile_to_native(const string &filename, bool assembly) {
     assert(module && "No module defined. Must call compile before calling compile_to_native");
 
-    optimize_module();
-    
     // Get the target specific parser.
     string error_string;
     log(1) << "Compiling to native code...\n";
@@ -385,12 +439,12 @@ void CodeGen::compile_to_native(const string &filename, bool assembly) {
     options.NoNaNsFPMath = true;
     options.HonorSignDependentRoundingFPMathOption = false;
     options.UseSoftFloat = false;
-    options.FloatABIType = FloatABI::Default;
+    options.FloatABIType = FloatABI::Hard;
     options.NoZerosInBSS = false;
     options.GuaranteedTailCallOpt = false;
     options.DisableTailCalls = false;
-    options.StackAlignmentOverride = 0;
-    options.RealignStack = false;
+    options.StackAlignmentOverride = 32;
+    options.RealignStack = true;
     options.TrapFuncName = "";
     options.PositionIndependentExecutable = true;
     options.EnableSegmentedStacks = false;
@@ -831,9 +885,36 @@ void CodeGen::visit(const Not *op) {
 
 
 void CodeGen::visit(const Select *op) {
-    value = builder->CreateSelect(codegen(op->condition), 
-                                  codegen(op->true_value), 
-                                  codegen(op->false_value));
+    // For now we always generate select nodes, but the code is here
+    // for if then elses if we need it
+    if (false && op->condition.type().is_scalar()) {
+        // Codegen an if-then-else so we don't go to the expense of
+        // generating both vectors
+
+        BasicBlock *true_bb = BasicBlock::Create(context, "true_bb", function);
+        BasicBlock *false_bb = BasicBlock::Create(context, "false_bb", function);
+        BasicBlock *after_bb = BasicBlock::Create(context, "after_bb", function);
+        builder->CreateCondBr(codegen(op->condition), true_bb, false_bb);
+
+        builder->SetInsertPoint(true_bb);
+        Value *true_value = codegen(op->true_value);
+        builder->CreateBr(after_bb);
+
+        builder->SetInsertPoint(false_bb);
+        Value *false_value = codegen(op->false_value);
+        builder->CreateBr(after_bb);        
+
+        builder->SetInsertPoint(after_bb);
+        PHINode *phi = builder->CreatePHI(true_value->getType(), 2);
+        phi->addIncoming(true_value, true_bb);
+        phi->addIncoming(false_value, false_bb);
+
+        value = phi;
+    } else {
+        value = builder->CreateSelect(codegen(op->condition), 
+                                      codegen(op->true_value), 
+                                      codegen(op->false_value));
+    }
 }
 
 Value *CodeGen::codegen_buffer_pointer(string buffer, Halide::Type type, Value *index) {
@@ -994,7 +1075,7 @@ void CodeGen::create_load(const Load *op, bool recurse) {
 
         bool internal = !op->image.defined() && !op->param.defined();
 
-        if (ramp && internal) {            
+        if (ramp && internal) {
             // If it's an internal allocation, we can boost the
             // alignment using the results of the modulus remainder
             // analysis
@@ -1015,7 +1096,6 @@ void CodeGen::create_load(const Load *op, bool recurse) {
             Value *a = builder->CreateAlignedLoad(ptr, alignment);
             ptr = builder->CreateConstGEP1_32(ptr, 1);
             int bytes = (op->type.bits * op->type.width)/8;
-            log(1) << "Alignment of second load = " << gcd(alignment, bytes) << "\n";
             Value *b = builder->CreateAlignedLoad(ptr, gcd(alignment, bytes));
             vector<Constant *> indices(ramp->width);
             for (int i = 0; i < ramp->width; i++) {
@@ -1043,6 +1123,31 @@ void CodeGen::create_load(const Load *op, bool recurse) {
                 indices[i] = ConstantInt::get(i32, ramp->width-1-i);
             }
             value = builder->CreateShuffleVector(vec, undef, ConstantVector::get(indices));
+        } else if (ramp) {
+            // Gather without generating the indices as a vector
+            Value *ptr = codegen_buffer_pointer(op->name, op->type.element_of(), codegen(ramp->base));
+            Value *stride = codegen(ramp->stride);
+            value = UndefValue::get(llvm_type_of(op->type));
+            for (int i = 0; i < ramp->width; i++) {                
+                Value *lane = ConstantInt::get(i32, i);
+                Value *val = builder->CreateLoad(ptr);
+                value = builder->CreateInsertElement(value, val, lane);
+                ptr = builder->CreateGEP(ptr, stride);
+            }
+        } else if (false /* should_scalarize(op->index) */) {
+            // TODO: put something sensible in for
+            // should_scalarize. Probably a good idea if there are no
+            // loads in it, and it's all int32.
+
+            // Compute the index as scalars, and then do a gather
+            Value *vec = UndefValue::get(llvm_type_of(op->type));
+            for (int i = 0; i < op->type.width; i++) {
+                Value *idx = codegen(extract_lane(op->index, i));
+                Value *ptr = codegen_buffer_pointer(op->name, op->type.element_of(), idx);
+                Value *val = builder->CreateLoad(ptr);
+                vec = builder->CreateInsertElement(vec, val, ConstantInt::get(i32, i));
+            }
+            value = vec;
         } else {                
 	    // check for clamped vector load
 	    IRPrinter irp = IRPrinter(std::cout);
@@ -1108,17 +1213,18 @@ void CodeGen::create_load(const Load *op, bool recurse) {
 		phi->addIncoming(unbounded, unbounded_bb);
 		value = phi;
 	    } else {
-		// 5) General gathers
-		Value *index = codegen(op->index);
-		value = UndefValue::get(llvm_type_of(op->type));
-		for (int i = 0; i < op->type.width; i++) {
-		    Value *idx = builder->CreateExtractElement(index, ConstantInt::get(i32, i));
-		    Value *ptr = codegen_buffer_pointer(op->name, op->type.element_of(), idx);
-		    Value *val = builder->CreateLoad(ptr);
-		    value = builder->CreateInsertElement(value, val, ConstantInt::get(i32, i));
-		}
+	      // General gathers
+	      Value *index = codegen(op->index);
+	      Value *vec = UndefValue::get(llvm_type_of(op->type));
+	      for (int i = 0; i < op->type.width; i++) {
+                Value *idx = builder->CreateExtractElement(index, ConstantInt::get(i32, i));
+                Value *ptr = codegen_buffer_pointer(op->name, op->type.element_of(), idx);
+                Value *val = builder->CreateLoad(ptr);
+                vec = builder->CreateInsertElement(vec, val, ConstantInt::get(i32, i));
+	      }
+	      value = vec;
 	    }
-        }            
+	}
     }
 }
 
@@ -1167,12 +1273,13 @@ void CodeGen::visit(const Call *op) {
     // cue for llvm to generate particular ops. In general these are
     // handled in the standard library, but ones with e.g. varying
     // types are handled here.
-    if (op->name == "extract odd lanes" || op->name == "extract even lanes") {
-        bool even = (op->name == "extract even lanes");
-        assert(args.size() == 1);
+    if (op->name == "shuffle vector") {
+        assert((int) op->args.size() == 1 + op->type.width);
         vector<Constant *> indices(op->type.width);
         for (size_t i = 0; i < indices.size(); i++) {
-            indices[i] = ConstantInt::get(i32, even ? (i*2) : (i*2 + 1));
+            const IntImm *idx = op->args[i+1].as<IntImm>();
+            assert(idx);
+            indices[i] = ConstantInt::get(i32, idx->value);
         }
         Value *arg = codegen(op->args[0]);
         value = builder->CreateShuffleVector(arg, arg, ConstantVector::get(indices));
@@ -1201,8 +1308,8 @@ void CodeGen::visit(const Call *op) {
         const Call *filename = op->args[1].as<Call>();
         assert(func && filename && "Malformed debug_to_file node");
         // Grab the function from the initial module
-        llvm::Function *debug_to_file = module->getFunction("debug_to_file");
-        assert(debug_to_file && "Could not find debug_to_file function in initial module");
+        llvm::Function *debug_to_file = module->getFunction("halide_debug_to_file");
+        assert(debug_to_file && "Could not find halide_debug_to_file function in initial module");
 
         // Make the filename a global string constant
         llvm::Type *filename_type = ArrayType::get(i8, filename->name.size()+1);
@@ -1217,6 +1324,7 @@ void CodeGen::visit(const Call *op) {
             args.push_back(codegen(op->args[i]));
         }
 
+	log(4) << "Creating call to debug_to_file\n";
         value = builder->CreateCall(debug_to_file, args);
         return;
     }
@@ -1245,6 +1353,7 @@ void CodeGen::visit(const Call *op) {
     }
 
     if (op->type.is_scalar()) {
+        log(4) << "Creating call to " << op->name << "\n";
         value = builder->CreateCall(fn, args);
     } else {
         // Check if a vector version of the function already
@@ -1254,6 +1363,7 @@ void CodeGen::visit(const Call *op) {
         ss << op->name << 'x' << op->type.width;
         llvm::Function *vec_fn = module->getFunction(ss.str());
         if (vec_fn) {
+            log(4) << "Creating call to " << ss.str() << "\n";
             value = builder->CreateCall(vec_fn, args);
             fn = vec_fn;
         } else {
@@ -1266,6 +1376,7 @@ void CodeGen::visit(const Call *op) {
                 for (size_t j = 0; j < args.size(); j++) {
                     arg_lane[j] = builder->CreateExtractElement(args[j], idx);
                 }
+                log(4) << "Creating call to " << op->name << "\n";
                 Value *result_lane = builder->CreateCall(fn, arg_lane);
                 value = builder->CreateInsertElement(value, result_lane, idx);
             }
@@ -1356,11 +1467,12 @@ void CodeGen::visit(const PrintStmt *op) {
     args.insert(args.begin(), char_ptr);
 
     // Grab the print function from the initial module
-    llvm::Function *hlprintf = module->getFunction("hlprintf");
-    assert(hlprintf && "Could not find hlprintf in initial module");
+    llvm::Function *halide_printf = module->getFunction("halide_printf");
+    assert(halide_printf && "Could not find halide_printf in initial module");
 
     // Call it
-    builder->CreateCall(hlprintf, args);
+    log(4) << "Creating call to halide_printf\n";
+    builder->CreateCall(halide_printf, args);
 }
 
 void CodeGen::visit(const AssertStmt *op) {
@@ -1389,9 +1501,11 @@ void CodeGen::create_assertion(Value *cond, const string &message) {
     // Call the error handler
     llvm::Function *error_handler = module->getFunction("halide_error");
     assert(error_handler && "Could not find halide_error in initial module");
+    log(4) << "Creating call to error handlers\n";
     builder->CreateCall(error_handler, vec(char_ptr));
 
     // Do any architecture-specific cleanup necessary
+    log(4) << "Creating cleanup code\n";
     prepare_for_early_exit();
 
     // Bail out
@@ -1505,7 +1619,7 @@ public:
             Value *ptr = builder->CreateConstGEP2_32(dst, 0, idx++);
             if (val->getType() != iter->second) {
                 val = builder->CreateBitCast(val, iter->second);
-            }
+            }            
             builder->CreateStore(val, ptr);
         }
     }
@@ -1540,7 +1654,7 @@ void CodeGen::visit(const For *op) {
         // If min < max, fall through to the loop bb
         Value *enter_condition = builder->CreateICmpSLT(min, max);
         builder->CreateCondBr(enter_condition, loop_bb, after_bb);
-        builder->SetInsertPoint(loop_bb);
+        builder->SetInsertPoint(loop_bb);        
 
         // Make our phi node
         PHINode *phi = builder->CreatePHI(i32, 2);
@@ -1561,6 +1675,7 @@ void CodeGen::visit(const For *op) {
         // Maybe exit the loop
         Value *end_condition = builder->CreateICmpNE(next_var, max);
         builder->CreateCondBr(end_condition, loop_bb, after_bb);
+
         builder->SetInsertPoint(after_bb);
 
         // Pop the loop variable from the scope
@@ -1606,17 +1721,19 @@ void CodeGen::visit(const For *op) {
         Value *closure_handle = builder->CreatePointerCast(iter, closure_t->getPointerTo());
         // Load everything from the closure into the new scope
         closure.unpack_struct(symbol_table, closure_handle, builder);
-            
+
         // Generate the new function body
         codegen(op->body);
+        
         builder->CreateRetVoid();
 
         // Move the builder back to the main function and call do_par_for
         builder->SetInsertPoint(call_site);
-        llvm::Function *do_par_for = module->getFunction("do_par_for");
-        assert(do_par_for && "Could not find do_par_for in initial module");
+        llvm::Function *do_par_for = module->getFunction("halide_do_par_for");
+        assert(do_par_for && "Could not find halide_do_par_for in initial module");
         ptr = builder->CreatePointerCast(ptr, i8->getPointerTo());
         vector<Value *> args = vec((Value *)function, min, extent, ptr);
+	log(4) << "Creating call to do_par_for\n";
         builder->CreateCall(do_par_for, args);
 
         log(3) << "Leaving parallel for loop over " << op->name << "\n";
@@ -1635,15 +1752,12 @@ void CodeGen::visit(const Store *op) {
     // Scalar
     if (value_type.is_scalar()) {
         Value *index = codegen(op->index);
-        Value *ptr = codegen_buffer_pointer(op->name, value_type, index);
+        Value *ptr = codegen_buffer_pointer(op->name, value_type, index);        
         builder->CreateStore(val, ptr);
     } else {
         int alignment = op->value.type().bits / 8;
-        const Ramp *ramp;
-        const IntImm *stride;
-        if ((ramp = op->index.as<Ramp>()) &&
-            (stride = ramp->stride.as<IntImm>()) &&               
-            (stride->value == 1)) {
+        const Ramp *ramp = op->index.as<Ramp>();
+        if (ramp && is_one(ramp->stride)) {
 
             // Boost the alignment if possible
             ModulusRemainder mod_rem = modulus_remainder(ramp->base, alignment_info);
@@ -1657,9 +1771,18 @@ void CodeGen::visit(const Store *op) {
 
             Value *base = codegen(ramp->base);
             Value *ptr = codegen_buffer_pointer(op->name, value_type.element_of(), base);
-            ptr = builder->CreatePointerCast(ptr, llvm_type_of(value_type)->getPointerTo());
-            builder->CreateAlignedStore(val, ptr, alignment);                    
-
+            Value *ptr2 = builder->CreatePointerCast(ptr, llvm_type_of(value_type)->getPointerTo());
+            builder->CreateAlignedStore(val, ptr2, alignment);
+        } else if (ramp) {
+            Value *ptr = codegen_buffer_pointer(op->name, value_type.element_of(), codegen(ramp->base));
+            Value *stride = codegen(ramp->stride);
+            // Scatter without generating the indices as a vector
+            for (int i = 0; i < ramp->width; i++) {                
+                Value *lane = ConstantInt::get(i32, i);
+                Value *v = builder->CreateExtractElement(val, lane);
+                builder->CreateAlignedStore(v, ptr, op->value.type().bits/8);
+                ptr = builder->CreateGEP(ptr, stride);
+            }
         } else {
             // Scatter
             Value *index = codegen(op->index);
@@ -1668,7 +1791,7 @@ void CodeGen::visit(const Store *op) {
                 Value *idx = builder->CreateExtractElement(index, lane);
                 Value *v = builder->CreateExtractElement(val, lane);
                 Value *ptr = codegen_buffer_pointer(op->name, value_type.element_of(), idx);
-                builder->CreateStore(v, ptr);
+                builder->CreateStore(v, ptr); 
             }
         }
         
@@ -1691,9 +1814,9 @@ void CodeGen::visit(const Provide *op) {
 }
 
 template<>
-RefCount &ref_count<CodeGen>(const CodeGen *p) {return p->ref_count;}
+EXPORT RefCount &ref_count<CodeGen>(const CodeGen *p) {return p->ref_count;}
 
 template<>
-void destroy<CodeGen>(const CodeGen *p) {delete p;}
+EXPORT void destroy<CodeGen>(const CodeGen *p) {delete p;}
 
 }}
