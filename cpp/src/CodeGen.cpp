@@ -906,8 +906,7 @@ Expr extract_ramp(const Expr index) {
     else return index;
 }
 
-Expr extract_ramp_condition(const Expr op, int *n_ramps,
-			    bool use_min_val, bool replace_base_only) {
+Expr extract_ramp_condition(const Expr op, int *n_ramps, bool replace_max) {
     const Add *asAdd = op.as<Add>();
     const Sub *asSub = op.as<Sub>();
     const Mul *asMul = op.as<Mul>();
@@ -919,40 +918,50 @@ Expr extract_ramp_condition(const Expr op, int *n_ramps,
     int n_ramps_a = 0, n_ramps_b = 0;
     if (asAdd) {
         // add
-        ret = new Add(extract_ramp_condition(asAdd->a, &n_ramps_a,
-					     use_min_val, replace_base_only),
-                      extract_ramp_condition(asAdd->b, &n_ramps_b,
-					     use_min_val, replace_base_only));
+	a = extract_ramp_condition(asAdd->a, &n_ramps_a, replace_max);
+	b = extract_ramp_condition(asAdd->b, &n_ramps_b, replace_max);
+	if (n_ramps_a==1 && n_ramps_b==0) ret = a;
+	else if (n_ramps_a==0 && n_ramps_b==1) ret = b;
+	else ret = op;
     } else if (asSub) {
         // subtract
-        ret = new Sub(extract_ramp_condition(asSub->a, &n_ramps_a,
-					     use_min_val, replace_base_only),
-                      extract_ramp_condition(asSub->b, &n_ramps_b,
-					     use_min_val, replace_base_only));
+	a = extract_ramp_condition(asSub->a, &n_ramps_a, replace_max);
+	b = extract_ramp_condition(asSub->b, &n_ramps_b, replace_max);
+	if (n_ramps_a==1 && n_ramps_b==0) ret = a;
+	else if (n_ramps_a==0 && n_ramps_b==1) ret = b;
+	else ret = op;
     } else if (asMul) {
         // multiply
-        ret = new Mul(extract_ramp_condition(asMul->a, &n_ramps_a,
-					     use_min_val, replace_base_only),
-		      extract_ramp_condition(asMul->b, &n_ramps_b,
-					     use_min_val, replace_base_only));
+	a = extract_ramp_condition(asMul->a, &n_ramps_a, replace_max);
+	b = extract_ramp_condition(asMul->b, &n_ramps_b, replace_max);
+	if (n_ramps_a==1 && n_ramps_b==0) ret = a;
+	else if (n_ramps_a==0 && n_ramps_b==1) ret = b;
+	else ret = op;
     } else if (asMax) {
-        // max - if a or b has ramp, replace
-        a = extract_ramp_condition(asMax->a, &n_ramps_a, use_min_val, replace_base_only);
-        b = extract_ramp_condition(asMax->b, &n_ramps_b, use_min_val, replace_base_only);
-        if (!replace_base_only && (n_ramps_a == 1) && (n_ramps_b==0)) ret = a;
-        else if (!replace_base_only && (n_ramps_a == 0) && (n_ramps_b==1)) ret = b;
-        else ret = new Max(a, b);
+        a = extract_ramp_condition(asMax->a, &n_ramps_a, replace_max);
+        b = extract_ramp_condition(asMax->b, &n_ramps_b, replace_max);
+	// if replacing max, replace with appropriate LE
+	if (replace_max && n_ramps_a==1 && n_ramps_b==0) ret = new GE(a, b);
+	else if (replace_max && n_ramps_a==0 && n_ramps_b==1) ret = new GE(b, a);
+	else if (n_ramps_a==1 && n_ramps_b==0) ret = a;
+	else if (n_ramps_a==0 && n_ramps_b==1) ret = b;
+	else ret = op;
     } else if (asMin) {
         // min - if a or b has ramp, replace
-        a = extract_ramp_condition(asMin->a, &n_ramps_a, use_min_val, replace_base_only);
-        b = extract_ramp_condition(asMin->b, &n_ramps_b, use_min_val, replace_base_only);
-        if (!replace_base_only && (n_ramps_a == 1) && (n_ramps_b==0)) ret = a;
-        else if (!replace_base_only && (n_ramps_a == 0) && (n_ramps_b==1)) ret = b;
-        else ret = new Min(a, b);
+        a = extract_ramp_condition(asMin->a, &n_ramps_a, replace_max);
+        b = extract_ramp_condition(asMin->b, &n_ramps_b, replace_max);
+	// if replacing max, replace with appropriate LE
+	if (!replace_max && n_ramps_a==1 && n_ramps_b==0) ret = new LE(a, b);
+	else if (!replace_max && n_ramps_a==0 && n_ramps_b==1) ret = new LE(b, a);
+	else if (n_ramps_a==1 && n_ramps_b==0) ret = a;
+	else if (n_ramps_a==0 && n_ramps_b==1) ret = b;
+	else ret = op;
     } else if (asRamp) {
 	// TODO fix this for different kinds of ramps
 	n_ramps_a = 1;
-	if (use_min_val) {
+        int stride = asRamp->stride.as<IntImm>()->value;
+	// if stride is positive and replacing max, use base (or negative and not replacing max)
+	if ((replace_max && stride > 0) || (!replace_max && stride < 0)) {
 	    ret = asRamp->base;
 	} else {
 	    ret = asRamp->base + (asRamp->width*asRamp->stride);
@@ -1044,17 +1053,17 @@ void CodeGen::create_load(const Load *op, bool recurse) {
 	    printf("simplified: "); irp.print(new_index); printf("\n");
 
 	    if (ENABLE_CLAMPED_VECTOR_LD && recurse && new_index.as<Ramp>()) {
-		Expr low_bound = new EQ(extract_ramp_condition(op->index, NULL, true, true),
-					extract_ramp_condition(op->index, NULL, true, false));
-		printf("low bound: "); irp.print(low_bound); printf("\n");
-		low_bound = simplify(low_bound);
-		printf("simplified low bound: "); irp.print(low_bound); printf("\n");
-		Expr high_bound = new EQ(extract_ramp_condition(op->index, NULL, false, true),
-					 extract_ramp_condition(op->index, NULL, false, false));
-		printf("high bound: "); irp.print(high_bound); printf("\n");
-		high_bound = simplify(high_bound);
-		printf("simplified high bound: "); irp.print(high_bound); printf("\n");
-		Expr condition = new And(low_bound, high_bound);
+		Expr check_min = extract_ramp_condition(op->index, NULL, false);
+		printf("min check: "); irp.print(check_min); printf("\n");
+		check_min = simplify(check_min);
+		printf("simplified min check: "); irp.print(check_min); printf("\n");
+
+		Expr check_max = extract_ramp_condition(op->index, NULL, true);
+		printf("max check: "); irp.print(check_max); printf("\n");
+		check_max = simplify(check_max);
+		printf("simplified max check: "); irp.print(check_max); printf("\n");
+
+		Expr condition = new And(check_min, check_max);
 		printf("condition: "); irp.print(condition); printf("\n");
 		condition = simplify(condition);
 		printf("simplified condition: "); irp.print(condition); printf("\n");

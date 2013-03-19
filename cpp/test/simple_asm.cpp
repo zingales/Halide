@@ -10,13 +10,13 @@ int main(int argc, char **argv) {
     printf("Defining function...\n");
 #if 0
     f(x) = 5;
-    g(x) = f(x + 5);
+    g(x) = f(x);
 #elif 0
     f(x, y) = 5;
     g(x, y) = f(x+5,y+17);
-#elif 0
+#elif 1
     f(x) = 5;
-    g(x) = f(clamp(x, -3, 7));
+    g(x) = f(clamp(x, -33, 77));
 #elif 1
     f(x, y) = 5;
     g(x, y) = f(clamp(x, 0, 33), clamp(y, 0, 1));
@@ -55,7 +55,7 @@ int main(int argc, char **argv) {
 #endif
     f.compute_root(); //vectorize(x,2);
     g.vectorize(x, 4);
-    g.compile_to_assembly("/tmp/simple_asm_cvl_2d.s", {});
+    g.compile_to_assembly("/tmp/simple_asm_cvlv2_1d.s", {});
     //g.compile_to_bitcode("/tmp/simple_asm2.bc", {});
 
 
