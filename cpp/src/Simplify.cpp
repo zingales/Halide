@@ -777,11 +777,12 @@ class Simplify : public IRMutator {
             expr = mutate(mul_a->a < mul_b->a);
 	} else if (is_simple_const(b) && add_a && (is_simple_const(add_a->b))) {
 	    // Move constants to same side
+	    // For add, always of form varying + constant
 	    // example: (a + const1) < const2 -> a < (const2 - const1)
-	    expr = mutate(add_a->b < b - add_a->a);
+	    expr = mutate(add_a->a < b - add_a->b);
 	} else if (is_simple_const(a) && add_b && (is_simple_const(add_b->b))) {
 	    // const1 < (b + const2) -> (const1 - const2) < b
-	    expr = mutate(a - add_b->a < add_b->b);
+	    expr = mutate(a - add_b->b < add_b->a);
 	} else if (is_simple_const(b) && sub_a && (is_simple_const(sub_a->a) || 
 						      is_simple_const(sub_a->b))) {
 	    // Move constants to same side (for subtract)
