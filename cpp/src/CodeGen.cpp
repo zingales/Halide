@@ -1,4 +1,4 @@
-#define ENABLE_CLAMPED_VECTOR_LD 1
+//#define ENABLE_CLAMPED_VECTOR_LD 1
 
 #include <iostream>
 #include "IRPrinter.h"
@@ -1154,23 +1154,25 @@ void CodeGen::create_load(const Load *op, bool recurse) {
 	    IRPrinter irp = IRPrinter(std::cout);
 	    printf("initial index: "); irp.print(op->index); printf("\n");
 	    Expr new_index = extract_ramp(op->index);
-	    printf("with conditions met: "); irp.print(new_index); printf("\n");
+	    //printf("with conditions met: "); irp.print(new_index); printf("\n");
 	    new_index = simplify(new_index);
-	    printf("simplified: "); irp.print(new_index); printf("\n");
-
-	    if (ENABLE_CLAMPED_VECTOR_LD && recurse && new_index.as<Ramp>()) {
+	    //printf("simplified: "); irp.print(new_index); printf("\n");
+	    char *enabled = getenv("HL_ENABLE_CLAMPED_VECTOR_LOAD");
+	    bool is_enabled = enabled == NULL ? 0 : atoi(enabled);
+	    if (is_enabled && recurse && new_index.as<Ramp>()) {
+		printf("creating clamped vector load\n");
 		Expr check_min = extract_ramp_condition(op->index, NULL, false);
-		printf("min check: "); irp.print(check_min); printf("\n");
+		//printf("min check: "); irp.print(check_min); printf("\n");
 		check_min = simplify(check_min);
-		printf("simplified min check: "); irp.print(check_min); printf("\n");
+		//printf("simplified min check: "); irp.print(check_min); printf("\n");
 
 		Expr check_max = extract_ramp_condition(op->index, NULL, true);
-		printf("max check: "); irp.print(check_max); printf("\n");
+		//printf("max check: "); irp.print(check_max); printf("\n");
 		check_max = simplify(check_max);
-		printf("simplified max check: "); irp.print(check_max); printf("\n");
+		//printf("simplified max check: "); irp.print(check_max); printf("\n");
 
 		Expr condition = new And(check_min, check_max);
-		printf("condition: "); irp.print(condition); printf("\n");
+		//printf("condition: "); irp.print(condition); printf("\n");
 		condition = simplify(condition);
 		printf("simplified condition: "); irp.print(condition); printf("\n");
 		Load simplified_load = Load(op->type, op->name, new_index,
@@ -1214,6 +1216,7 @@ void CodeGen::create_load(const Load *op, bool recurse) {
 		phi->addIncoming(unbounded, unbounded_bb);
 		value = phi;
 	    } else {
+              printf("falling back on general gather\n");
 	      // General gathers
 	      Value *index = codegen(op->index);
 	      Value *vec = UndefValue::get(llvm_type_of(op->type));
