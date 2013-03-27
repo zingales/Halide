@@ -1,13 +1,10 @@
 local_laplacian/local_laplacian.h
 
-blur/halide_blur
-blur/halide_blur.h
-
-blur_clamped/halide_blur
-blur_clamped/halide_blur.h
 blur_clamped/halide_blur_cvl.h
 
+*/halide_blur
+*/halide_blur.h
 */test
 */process
 */output.png
-
+blur_diagonal/input.png
