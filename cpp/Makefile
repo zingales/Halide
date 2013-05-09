@@ -12,100 +12,118 @@ LLVM_BINDIR = $(shell $(LLVM_CONFIG) --bindir)
 LLVM_AS = $(LLVM_BINDIR)/llvm-as
 CXX_FLAGS = $(shell $(LLVM_CONFIG) --cflags) -Wall -Werror -fno-rtti -Woverloaded-virtual -Wno-unused-function -Os
 LIBS = -L $(shell $(LLVM_CONFIG) --libdir) $(shell $(LLVM_CONFIG) --libs bitwriter bitreader x86 arm linker nvptx ipo mcjit jit)
-TEST_CXX_FLAGS=
+TEST_CXX_FLAGS ?=
 UNAME = $(shell uname)
 ifeq ($(UNAME), Linux)
 TEST_CXX_FLAGS += -rdynamic
 endif
+BUILD_PREFIX ?= .
+BUILD_DIR=build/$(BUILD_PREFIX)
+BIN_DIR=bin/$(BUILD_PREFIX)
 
-SOURCE_FILES = CodeGen.cpp CodeGen_X86.cpp CodeGen_Posix.cpp CodeGen_ARM.cpp IR.cpp IRMutator.cpp IRPrinter.cpp IRVisitor.cpp CodeGen_C.cpp Substitute.cpp ModulusRemainder.cpp Bounds.cpp Derivative.cpp Func.cpp Simplify.cpp IREquality.cpp Util.cpp Function.cpp IROperator.cpp Lower.cpp Log.cpp Parameter.cpp Reduction.cpp RDom.cpp Tracing.cpp RemoveDeadLets.cpp StorageFlattening.cpp VectorizeLoops.cpp UnrollLoops.cpp BoundsInference.cpp IRMatch.cpp StmtCompiler.cpp integer_division_table.cpp SlidingWindow.cpp StorageFolding.cpp InlineReductions.cpp RemoveTrivialForLoops.cpp Deinterleave.cpp DebugToFile.cpp
+SOURCE_FILES = CodeGen.cpp CodeGen_Internal.cpp CodeGen_X86.cpp CodeGen_PTX_Host.cpp CodeGen_PTX_Dev.cpp CodeGen_Posix.cpp CodeGen_ARM.cpp IR.cpp IRMutator.cpp IRPrinter.cpp IRVisitor.cpp CodeGen_C.cpp Substitute.cpp ModulusRemainder.cpp Bounds.cpp Derivative.cpp Func.cpp Simplify.cpp IREquality.cpp Util.cpp Function.cpp IROperator.cpp Lower.cpp Log.cpp Parameter.cpp Reduction.cpp RDom.cpp Tracing.cpp RemoveDeadLets.cpp StorageFlattening.cpp VectorizeLoops.cpp UnrollLoops.cpp BoundsInference.cpp IRMatch.cpp StmtCompiler.cpp integer_division_table.cpp SlidingWindow.cpp StorageFolding.cpp InlineReductions.cpp RemoveTrivialForLoops.cpp Deinterleave.cpp DebugToFile.cpp Type.cpp JITCompiledModule.cpp
 
-HEADER_FILES = Util.h Type.h Argument.h Bounds.h BoundsInference.h Buffer.h buffer_t.h CodeGen_C.h CodeGen.h CodeGen_X86.h Deinterleave.h Derivative.h Extern.h Func.h Function.h Image.h InlineReductions.h integer_division_table.h IntrusivePtr.h IREquality.h IR.h IRMatch.h IRMutator.h IROperator.h IRPrinter.h IRVisitor.h JITCompiledModule.h Lambda.h Log.h Lower.h MainPage.h ModulusRemainder.h Parameter.h Param.h RDom.h Reduction.h RemoveDeadLets.h RemoveTrivialForLoops.h Schedule.h Scope.h Simplify.h SlidingWindow.h StmtCompiler.h StorageFlattening.h StorageFolding.h Substitute.h Tracing.h UnrollLoops.h Var.h VectorizeLoops.h CodeGen_Posix.h CodeGen_ARM.h DebugToFile.h
+# The externally-visible header files that go into making Halide.h. Don't include anything here that includes llvm headers.
+HEADER_FILES = Util.h Type.h Argument.h Bounds.h BoundsInference.h Buffer.h buffer_t.h CodeGen_C.h CodeGen.h CodeGen_X86.h CodeGen_PTX_Host.h CodeGen_PTX_Dev.h Deinterleave.h Derivative.h Extern.h Func.h Function.h Image.h InlineReductions.h integer_division_table.h IntrusivePtr.h IREquality.h IR.h IRMatch.h IRMutator.h IROperator.h IRPrinter.h IRVisitor.h JITCompiledModule.h Lambda.h Log.h Lower.h MainPage.h ModulusRemainder.h Parameter.h Param.h RDom.h Reduction.h RemoveDeadLets.h RemoveTrivialForLoops.h Schedule.h Scope.h Simplify.h SlidingWindow.h StmtCompiler.h StorageFlattening.h StorageFolding.h Substitute.h Tracing.h UnrollLoops.h Var.h VectorizeLoops.h CodeGen_Posix.h CodeGen_ARM.h DebugToFile.h
 
 SOURCES = $(SOURCE_FILES:%.cpp=src/%.cpp)
-OBJECTS = $(SOURCE_FILES:%.cpp=build/%.o)
+OBJECTS = $(SOURCE_FILES:%.cpp=$(BUILD_DIR)/%.o)
 HEADERS = $(HEADER_FILES:%.h=src/%.h)
 
-STDLIB_ARCHS = x86 x86_avx arm arm_android
+STDLIB_ARCHS = x86 x86_avx x86_32 arm arm_android ptx_host ptx_dev
 
-INITIAL_MODULES = $(STDLIB_ARCHS:%=build/initmod.%.o)
+INITIAL_MODULES = $(STDLIB_ARCHS:%=$(BUILD_DIR)/initmod.%.o)
 
 .PHONY: all
-all: bin/libHalide.a bin/libHalide.so include/Halide.h test_internal
+all: $(BIN_DIR)/libHalide.a $(BIN_DIR)/libHalide.so include/Halide.h test_internal
 
-bin/libHalide.a: $(OBJECTS) $(INITIAL_MODULES)
-	@-mkdir -p bin
-	ld -r -o build/Halide.o $(OBJECTS) $(INITIAL_MODULES) $(LIBS)
-	rm -f bin/libHalide.a
-	ar q bin/libHalide.a build/Halide.o
-	ranlib bin/libHalide.a
+$(BIN_DIR)/libHalide.a: $(OBJECTS) $(INITIAL_MODULES)
+	@-mkdir -p $(BIN_DIR)
+	ld -r -o $(BUILD_DIR)/Halide.o $(OBJECTS) $(INITIAL_MODULES) $(LIBS)
+	rm -f $(BIN_DIR)/libHalide.a
+	ar q $(BIN_DIR)/libHalide.a $(BUILD_DIR)/Halide.o
+	ranlib $(BIN_DIR)/libHalide.a
 
-bin/libHalide.so: bin/libHalide.a
-	$(CXX) -shared $(OBJECTS) $(INITIAL_MODULES) $(LIBS) -o bin/libHalide.so
+$(BIN_DIR)/libHalide.so: $(BIN_DIR)/libHalide.a
+	$(CXX) -shared $(OBJECTS) $(INITIAL_MODULES) $(LIBS) -o $(BIN_DIR)/libHalide.so
 
-include/Halide.h: $(HEADERS) bin/build_halide_h
+include/Halide.h: $(HEADERS) $(BIN_DIR)/build_halide_h
 	mkdir -p include
-	cd src; ../bin/build_halide_h $(HEADER_FILES) > ../include/Halide.h; cd ..
+	cd src; ../$(BIN_DIR)/build_halide_h $(HEADER_FILES) > ../include/Halide.h; cd ..
 
-bin/build_halide_h: src/build_halide_h.cpp
+$(BIN_DIR)/build_halide_h: src/build_halide_h.cpp
 	g++ $< -o $@
 
 RUNTIME_OPTS_x86 = -march=corei7 
 RUNTIME_OPTS_x86_avx = -march=corei7-avx 
+RUNTIME_OPTS_x86_32 = -m32 -march=atom
 RUNTIME_OPTS_arm = -m32 
 RUNTIME_OPTS_arm_android = -m32 
-RUNTIME_LL_STUBS_x86 = src/runtime/x86.ll
-RUNTIME_LL_STUBS_x86_avx = src/runtime/x86.ll src/runtime/x86_avx.ll
+RUNTIME_OPTS_ptx_host = $(RUNTIME_OPTS_x86) 
+RUNTIME_OPTS_ptx_dev = 
+RUNTIME_LL_STUBS_x86 = src/runtime/x86.ll src/runtime/x86_sse41.ll
+RUNTIME_LL_STUBS_x86_32 = src/runtime/x86.ll
+RUNTIME_LL_STUBS_x86_avx = src/runtime/x86.ll src/runtime/x86_sse41.ll src/runtime/x86_avx.ll
 RUNTIME_LL_STUBS_arm = src/runtime/arm.ll
 RUNTIME_LL_STUBS_arm_android = src/runtime/arm.ll
+RUNTIME_LL_STUBS_ptx_host = $(RUNTIME_LL_STUBS_x86)
+RUNTIME_LL_STUBS_ptx_dev = src/runtime/ptx_dev.ll
 
 -include $(OBJECTS:.o=.d)
 
-build/initmod.%.cpp: bin/bitcode2cpp src/runtime/*.cpp src/runtime/*.ll build/llvm_ok build/clang_ok
-	@-mkdir -p build
+$(BUILD_DIR)/initmod.%.cpp: $(BIN_DIR)/bitcode2cpp src/runtime/*.cpp src/runtime/*.ll $(BUILD_DIR)/llvm_ok $(BUILD_DIR)/clang_ok
+	@-mkdir -p $(BUILD_DIR)
 	$(CLANG) $(RUNTIME_OPTS_$*) -emit-llvm -O3 -S src/runtime/runtime.$*.cpp -o - | \
 	cat - $(RUNTIME_LL_STUBS_$*) | \
 	$(LLVM_AS) -o - | \
-	./bin/bitcode2cpp $* > $@
+	./$(BIN_DIR)/bitcode2cpp $* > $@
 
-bin/bitcode2cpp: src/bitcode2cpp.cpp
-	@-mkdir -p bin
+$(BIN_DIR)/bitcode2cpp: src/bitcode2cpp.cpp
+	@-mkdir -p $(BIN_DIR)
 	$(CXX) $< -o $@
 
-build/initmod.%.o: build/initmod.%.cpp
-	$(CXX) -c $< -o $@ -MMD -MP -MF build/$*.d -MT build/$*.o
+$(BUILD_DIR)/initmod.%.o: $(BUILD_DIR)/initmod.%.cpp
+	$(CXX) -c $< -o $@ -MMD -MP -MF $(BUILD_DIR)/$*.d -MT $(BUILD_DIR)/$*.o
 
-build/%.o: src/%.cpp src/%.h build/llvm_ok
-	@-mkdir -p build
-	$(CXX) $(CXX_FLAGS) -c $< -o $@ -MMD -MP -MF build/$*.d -MT build/$*.o 
+$(BUILD_DIR)/%.o: src/%.cpp src/%.h $(BUILD_DIR)/llvm_ok
+	@-mkdir -p $(BUILD_DIR)
+	$(CXX) $(CXX_FLAGS) -c $< -o $@ -MMD -MP -MF $(BUILD_DIR)/$*.d -MT $(BUILD_DIR)/$*.o 
 
 .PHONY: clean
 clean:
-	rm -rf bin/*
-	rm -rf build/*
+	rm -rf $(BIN_DIR)/*
+	rm -rf $(BUILD_DIR)/*
 	rm -rf include/*
 
 .SECONDARY:
 
 TESTS = $(shell ls test/*.cpp)
+ERROR_TESTS = $(shell ls test/error/*.cpp)
 
 # TODO: move this implementation into Makefile.tests which contains a .NOTPARALLEL rule?
-tests: $(TESTS:test/%.cpp=test_%)
+tests: $(TESTS:test/%.cpp=test_%) $(ERROR_TESTS:test/error/%.cpp=error_%)
 
-bin/test_internal: test/internal.cpp bin/libHalide.so
-	$(CXX) $(CXX_FLAGS)  $< -Isrc -Lbin -lHalide -lpthread -ldl -o $@	
+$(BIN_DIR)/test_internal: test/internal.cpp $(BIN_DIR)/libHalide.so
+	$(CXX) $(CXX_FLAGS)  $< -Isrc -L$(BIN_DIR) -lHalide -lpthread -ldl -o $@	
 
-bin/test_%: test/%.cpp bin/libHalide.so include/Halide.h
-	$(CXX) $(TEST_CXX_FLAGS) -g $<  -Iinclude -Lbin -lHalide -lpthread -ldl -o $@	
+$(BIN_DIR)/test_%: test/%.cpp $(BIN_DIR)/libHalide.so include/Halide.h
+	$(CXX) $(TEST_CXX_FLAGS) -O3 $<  -Iinclude -L$(BIN_DIR) -lHalide -lpthread -ldl -o $@	
 
-test_%: bin/test_%
+$(BIN_DIR)/error_%: test/error/%.cpp $(BIN_DIR)/libHalide.so include/Halide.h
+	$(CXX) $(TEST_CXX_FLAGS) -O3 $<  -Iinclude -L$(BIN_DIR) -lHalide -lpthread -ldl -o $@	
+
+test_%: $(BIN_DIR)/test_%
 	@-mkdir -p tmp
-	cd tmp ; DYLD_LIBRARY_PATH=../bin LD_LIBRARY_PATH=../bin ../$<
+	cd tmp ; DYLD_LIBRARY_PATH=../$(BIN_DIR) LD_LIBRARY_PATH=../$(BIN_DIR) ../$<
 	@-echo
 
+error_%: $(BIN_DIR)/error_%
+	@-mkdir -p tmp
+	cd tmp ; DYLD_LIBRARY_PATH=../$(BIN_DIR) LD_LIBRARY_PATH=../$(BIN_DIR) ../$< 2>&1 | egrep --q "Assertion.*failed"
+	@-echo
 
 .PHONY: test_apps
-test_apps: bin/libHalide.a
+test_apps: $(BIN_DIR)/libHalide.a
 	make -C apps/bilateral_grid clean
 	make -C apps/bilateral_grid out.png
 	make -C apps/local_laplacian clean
@@ -138,12 +156,12 @@ endif
 endif
 
 ifdef CLANG_OK
-build/clang_ok:
+$(BUILD_DIR)/clang_ok:
 	@echo "Found a new enough version of clang"
-	mkdir -p build
-	touch build/clang_ok
+	mkdir -p $(BUILD_DIR)
+	touch $(BUILD_DIR)/clang_ok
 else
-build/clang_ok:
+$(BUILD_DIR)/clang_ok:
 	@echo "Can't find clang or version of clang too old (we need 3.1 or greater):"
 	@echo "You can override this check by setting CLANG_OK=y"
 	echo '$(CLANG_VERSION)'
@@ -154,12 +172,12 @@ build/clang_ok:
 endif
 
 ifdef LLVM_OK
-build/llvm_ok:
+$(BUILD_DIR)/llvm_ok:
 	@echo "Found a new enough version of llvm"
-	mkdir -p build
-	touch build/llvm_ok
+	mkdir -p $(BUILD_DIR)
+	touch $(BUILD_DIR)/llvm_ok
 else
-build/llvm_ok:
+$(BUILD_DIR)/llvm_ok:
 	@echo "Can't find llvm or version of llvm too old (we need 3.2 or greater):"
 	@echo "You can override this check by setting LLVM_OK=y"
 	$(LLVM_CONFIG) --version

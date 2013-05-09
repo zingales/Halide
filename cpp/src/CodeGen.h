@@ -18,6 +18,8 @@ class LLVMContext;
 class Type;
 class StructType;
 class Instruction;
+class CallInst;
+class ExecutionEngine;
 }
 
 #include <map>
@@ -66,17 +68,21 @@ public:
      * functions pointers into that machine code. */
     JITCompiledModule compile_to_function_pointers();
 
-    /** What should be passed as -mcpu and -mattrs for
+    /** What should be passed as -mcpu, -mattrs, and related for
      * compilation. The architecture-specific code generator should
      * define these. */
     // @{
     virtual std::string mcpu() const = 0;
     virtual std::string mattrs() const = 0;
+    virtual bool use_soft_float_abi() const = 0;
     // @}
 
-protected:
+    /** Do any required target-specific things to the execution engine
+     * and the module prior to jitting. Called by JITCompiledModule
+     * just before it jits. Does nothing by default. */
+    virtual void jit_init(llvm::ExecutionEngine *ee, llvm::Module *module) {}
 
-    class Closure;
+protected:
 
     /** State needed by llvm for code generation, including the
      * current module, function, context, builder, and most recently
@@ -90,12 +96,17 @@ protected:
     llvm::Module *module;
     bool owns_module;
     llvm::Function *function;
-    llvm::LLVMContext &context;
+    llvm::LLVMContext *context;
     llvm::IRBuilder<true, llvm::ConstantFolder, llvm::IRBuilderDefaultInserter<true> > *builder;
     llvm::Value *value;
     //@}
 
-    /** Run all of llvm's optimization passes on the module */
+    /** Initialize the CodeGen internal state to compile a fresh
+     * module. This allows reuse of one CodeGen object to compiled
+     * multiple related modules (e.g. multiple device kernels). */
+    void init_module();
+
+    /** Run all of llvm's optimization passes on the module. */
     void optimize_module();
 
     /** Add an entry to the symbol table, hiding previous entries with
@@ -107,34 +118,39 @@ protected:
      * scope. */
     void sym_pop(const std::string &name);
 
+    /** Fetch an entry from the symbol table. */
+    llvm::Value* sym_get(const std::string &name);
+
     /** Some useful llvm types */
     // @{
     llvm::Type *void_t, *i1, *i8, *i16, *i32, *i64, *f16, *f32, *f64;
     llvm::StructType *buffer_t;
     // @}
 
-    /** The name of the function being generated */
+    /** The name of the function being generated. */
     std::string function_name;
 
     /** Emit code that evaluates an expression, and return the llvm
      * representation of the result of the expression. */
     llvm::Value *codegen(Expr);
     
-    /** Emit code that runs a statement */
+    /** Emit code that runs a statement. */
     void codegen(Stmt);
 
     /** Take an llvm Value representing a pointer to a buffer_t,
-     * and populate the symbol table with its constituent parts
+     * and populate the symbol table with its constituent parts.
      */
     void unpack_buffer(std::string name, llvm::Value *buffer);
 
-    /** Add a definition of buffer_t to the module if it isn't already there */
+    /** Add a definition of buffer_t to the module if it isn't already there. */
     void define_buffer_t();
 
     /** Codegen an assertion. If false, it bails out and calls the error handler. */
     void create_assertion(llvm::Value *condition, const std::string &message);
        
-    /** Given an llvm value representing a pointer to a buffer_t, extract various subfields */
+    /** Given an llvm value representing a pointer to a buffer_t, extract various subfields.
+     * The *_ptr variants return a pointer to the struct element, while the basic variants 
+     * load the actual value. */
     // @{
     llvm::Value *buffer_host(llvm::Value *);
     llvm::Value *buffer_dev(llvm::Value *);
@@ -144,15 +160,20 @@ protected:
     llvm::Value *buffer_extent(llvm::Value *, int);
     llvm::Value *buffer_stride(llvm::Value *, int);
     llvm::Value *buffer_elem_size(llvm::Value *);
+    llvm::Value *buffer_host_ptr(llvm::Value *);
+    llvm::Value *buffer_dev_ptr(llvm::Value *);
+    llvm::Value *buffer_host_dirty_ptr(llvm::Value *);
+    llvm::Value *buffer_dev_dirty_ptr(llvm::Value *);
+    llvm::Value *buffer_min_ptr(llvm::Value *, int);
+    llvm::Value *buffer_extent_ptr(llvm::Value *, int);
+    llvm::Value *buffer_stride_ptr(llvm::Value *, int);
+    llvm::Value *buffer_elem_size_ptr(llvm::Value *);
     // @}
 
     /** Generate a pointer into a named buffer at a given index, of a
      * given type. The index counts according to the scalar type of
      * the type passed in. */
     llvm::Value *codegen_buffer_pointer(std::string buffer, Type type, llvm::Value *index);
-
-    /** Return the llvm version of a halide type */
-    llvm::Type *llvm_type_of(Type type);
 
     using IRVisitor::visit;
 
@@ -210,20 +231,22 @@ protected:
     virtual void visit(const Realize *);
     // @}
 
-
     /** If we have to bail out of a pipeline midway, this should
-     * inject the appropriate cleanup code. */
+     * inject the appropriate target-specific cleanup code. */
     virtual void prepare_for_early_exit() {}
+
+    /** Get the llvm type equivalent to the given halide type in the
+     * current context. */
+    llvm::Type *llvm_type_of(Type);
 
 private:
     /** All the values in scope at the current code location during
      * codegen. Use sym_push and sym_pop to access. */
     Scope<llvm::Value *> symbol_table;
 
-    /** Alignment info for Int(32) variables in scope */
+    /** Alignment info for Int(32) variables in scope. */
     Scope<ModulusRemainder> alignment_info;
         
-
 };
 
 }}

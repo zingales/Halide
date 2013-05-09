@@ -30,6 +30,28 @@ bool is_const(Expr e, int value) {
     return false;
 }
 
+bool is_const_power_of_two(Expr e, int *bits) {
+    const Broadcast *b = e.as<Broadcast>();
+    if (b) return is_const_power_of_two(b->value, bits);
+    
+    const Cast *c = e.as<Cast>();
+    if (c) return is_const_power_of_two(c->value, bits);
+
+    const IntImm *int_imm = e.as<IntImm>();
+    if (int_imm) {
+        int bit_count = 0;
+        int tmp;
+        for (tmp = 1; tmp < int_imm->value; tmp *= 2) {
+            bit_count++;
+        }
+        if (tmp == int_imm->value) {
+            *bits = bit_count;
+            return true;
+        }
+    }
+    return false;
+}
+
 bool is_positive_const(Expr e) {
     if (const IntImm *i = e.as<IntImm>()) return i->value > 0;
     if (const FloatImm *f = e.as<FloatImm>()) return f->value > 0.0f;
@@ -64,7 +86,7 @@ bool is_negative_const(Expr e) {
 
 bool is_zero(Expr e) {
     if (const IntImm *int_imm = e.as<IntImm>()) return int_imm->value == 0;
-    if (const FloatImm *float_imm = e.as<FloatImm>()) return float_imm->value == 0;
+    if (const FloatImm *float_imm = e.as<FloatImm>()) return float_imm->value == 0.0f;
     if (const Cast *c = e.as<Cast>()) return is_zero(c->value);
     if (const Broadcast *b = e.as<Broadcast>()) return is_zero(b->value);
     return false;
@@ -86,15 +108,42 @@ bool is_two(Expr e) {
     return false;
 }
 
+int int_cast_constant(Type t, int val) {
+    // Unsigned of less than 32 bits is masked to select the appropriate bits
+    if (t.is_uint()) {
+        if (t.bits < 32) {
+            val = val & ((((unsigned int) 1) << t.bits) - 1);
+        }
+    }
+    else if (t.is_int()) {
+        if (t.bits < 32) {
+            // sign extend the lower bits
+            val = ((val << (32 - t.bits)) >> (32 - t.bits));
+        }
+    }
+    else {
+        assert(0 && "Cast of integer to non-integer not available here");
+    }
+    return val;
+}
+
 Expr make_const(Type t, int val) {
     if (t == Int(32)) return val;
     if (t == Float(32)) return (float)val;
     if (t.is_vector()) {
         return new Broadcast(make_const(t.element_of(), val), t.width);
     }
+    // When constructing cast integer constants, use the canonical representation.
+    if (t.is_int() || t.is_uint()) {
+        val = int_cast_constant(t, val);
+    }
     return new Cast(t, val);
 }
         
+Expr make_bool(bool val, int w) {
+    return make_const(UInt(1, w), val);
+}
+
 Expr make_zero(Type t) {
     return make_const(t, 0);
 }
@@ -142,7 +191,7 @@ void match_types(Expr &a, Expr &b) {
         if (ta.bits > tb.bits) b = cast(ta, b);
         else a = cast(tb, a); 
     } else if (!ta.is_float() && !tb.is_float() && is_const(b)) {
-        // (u)int(a) * (u)intImm(b) -> int(a)
+        // (u)int(a) * (u)intImm(b) -> (u)int(a)
         b = cast(ta, b); 
     } else if (!tb.is_float() && !ta.is_float() && is_const(a)) {
         a = cast(tb, a); 

@@ -35,7 +35,17 @@ private:
      * cached strides are correct, and that the image data is on the
      * host. */
     void prepare_for_direct_pixel_access() {
-        // TODO: make sure buffer has been copied to host
+        // Make sure buffer has been copied to host. This is a no-op
+        // if there's no device involved.
+        buffer.copy_to_host();        
+
+        // We're probably about to modify the pixels, so to be
+        // conservative we'd better set host dirty. If you're sure
+        // you're not going to modify this memory via the Image
+        // object, then you can call set_host_dirty(false) on the
+        // underlying buffer.
+        buffer.set_host_dirty(true);
+
         if (buffer.defined()) {
             base = (T *)buffer.host_ptr();
             stride_1 = buffer.stride(1);

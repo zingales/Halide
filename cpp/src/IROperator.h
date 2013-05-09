@@ -21,6 +21,10 @@ bool EXPORT is_const(Expr e);
  * Cast, or Broadcast of the same. */
 bool EXPORT is_const(Expr e, int v);
 
+/** Is the expression a constant integer power of two. Also returns
+ * log base two of the expression if it is. */
+bool EXPORT is_const_power_of_two(Expr e, int *bits);
+
 /** Is the expression a const (as defined by is_const), and also
  * strictly greater than zero (in all lanes, if a vector expression) */
 bool EXPORT is_positive_const(Expr e);
@@ -41,8 +45,28 @@ bool EXPORT is_one(Expr e);
  * to two (in all lanes, if a vector expression) */
 bool EXPORT is_two(Expr e);
 
+/** Given an integer value, cast it into a designated integer type
+ * and return the bits as int. Unsigned types are returned as bits in the int
+ * and should be cast to unsigned int for comparison.
+ * int_cast_constant implements bit manipulations to wrap val into the
+ * value range of the Type t. 
+ * For example, int_cast_constant(UInt(16), -1) returns 65535
+ * int_cast_constant(Int(8), 128) returns -128
+ */
+int EXPORT int_cast_constant(Type t, int val);
+
 /** Construct a const of the given type */
 Expr EXPORT make_const(Type t, int val);
+
+/** Construct a boolean constant from a C++ boolean value.
+ * May also be a vector if width is given.
+ * It is not possible to coerce a C++ boolean to Expr because
+ * if we provide such a path then char objects can ambiguously
+ * be converted to Halide Expr or to std::string.  The problem
+ * is that C++ does not have a real bool type - it is in fact
+ * close enough to char that C++ does not know how to distinguish them.
+ * make_bool is the explicit coercion. */
+Expr make_bool(bool val, int width = 1);
 
 /** Construct the representation of zero in the given type */
 Expr EXPORT make_zero(Type t);
@@ -317,6 +341,7 @@ inline Expr abs(Expr a) {
     if (a.type() == Float(64)) 
         return new Internal::Call(Float(64), "abs_f64", vec(a));
     assert(false && "Invalid type for abs");
+    return 0; // prevent "control reaches end of non-void function" error
 }
 
 /** Returns an expression equivalent to the ternary operator in C. If

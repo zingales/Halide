@@ -16,7 +16,7 @@ public:
 
     /** Create an x86 code generator. Processor features can be
      * enabled using the appropriate arguments */
-    CodeGen_X86(bool use_sse_41 = true, bool use_avx = true);
+    CodeGen_X86(bool use_64_bits = true, bool use_sse_41 = true, bool use_avx = true);
         
     /** Compile to an internally-held llvm module. Takes a halide
      * statement, the name of the function produced, and the arguments
@@ -29,6 +29,9 @@ public:
     static void test();
 
 protected:
+    /** Should the emitted code use 64-bit instructions and pointers */
+    bool use_64_bit;
+
     /** Should the emitted code make use of sse 4.1 */
     bool use_sse_41;
 
@@ -38,7 +41,7 @@ protected:
     /** Generate a call to an sse or avx intrinsic */
     // @{
     llvm::Value *call_intrin(Type t, const std::string &name, std::vector<Expr>);    
-    llvm::Value *call_intrin(Type t, const std::string &name, std::vector<llvm::Value *>);    
+    llvm::Value *call_intrin(llvm::Type *t, const std::string &name, std::vector<llvm::Value *>);    
     // @}
 
     using CodeGen_Posix::visit;
@@ -53,6 +56,7 @@ protected:
 
     std::string mcpu() const;
     std::string mattrs() const;
+    bool use_soft_float_abi() const;
 };
 
 }}

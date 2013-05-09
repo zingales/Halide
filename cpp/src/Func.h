@@ -27,7 +27,7 @@ namespace Halide {
 class FuncRefVar {
     Internal::Function func;
     std::vector<std::string> args;
-    void add_implicit_vars(std::vector<std::string> &args, Expr e);
+    void add_implicit_vars(std::vector<std::string> &args, Expr e) const;
 public:
     FuncRefVar(Internal::Function, const std::vector<Var> &);
         
@@ -81,7 +81,7 @@ public:
 class FuncRefExpr {
     Internal::Function func;
     std::vector<Expr> args;
-    void add_implicit_vars(std::vector<Expr> &args, Expr e);
+    void add_implicit_vars(std::vector<Expr> &args, Expr e) const;
 public:
     FuncRefExpr(Internal::Function, const std::vector<Expr> &);
     FuncRefExpr(Internal::Function, const std::vector<std::string> &);
@@ -227,8 +227,8 @@ class Func {
      * up with 'implicit' vars with canonical names. This lets you
      * pass around partially-applied halide functions. */
     // @{
-    void add_implicit_vars(std::vector<Var> &);
-    void add_implicit_vars(std::vector<Expr> &);
+    void add_implicit_vars(std::vector<Var> &) const;
+    void add_implicit_vars(std::vector<Expr> &) const;
     // @}
 
     /** The lowered imperative form of this function. Cached here so
@@ -249,6 +249,13 @@ class Func {
     // @{
     void *(*custom_malloc)(size_t);
     void (*custom_free)(void *);
+    // @}
+
+    /** The current custom parallel task launcher and handler for
+     * realizing this function. May be NULL. */
+    // @{
+    void (*custom_do_par_for)(void (*)(int, uint8_t *), int, int, uint8_t *);
+    void (*custom_do_task)(void (*)(int, uint8_t *), int, uint8_t *);
     // @}
 
     /** Pointers to current values of the automatically inferred
@@ -283,10 +290,12 @@ public:
      * buffer. Has the same dimensionality as the buffer. Useful for
      * passing Images to c++ functions that expect Funcs */
     //@{
-    EXPORT Func(Buffer image);
+    //EXPORT Func(Buffer image);
+    /*
     template<typename T> Func(Image<T> image) {
         (*this) = Func(Buffer(image));
     }
+    */
     //@}
 
     /** Evaluate this function over some rectangular domain and return
@@ -364,17 +373,64 @@ public:
     EXPORT void compile_jit();
 
     /** Set the error handler function that be called in the case of
-     * runtime errors during subsequent calls to realize. Only
-     * relevant when jitting. */
+     * runtime errors during halide pipelines. If you are compiling
+     * statically, you can also just define your own function with
+     * signature 
+     \code
+     extern "C" halide_error(char *)
+     \endcode
+     * This will clobber Halide's version. 
+     */
     EXPORT void set_error_handler(void (*handler)(char *));
 
-    /** Set a custom malloc and free to use for subsequent calls to
-     * realize. Malloc should return 32-byte aligned chunks of memory,
-     * with 32-bytes extra allocated on the start and end so that
-     * vector loads can spill off the end slightly. Metadata (e.g. the
-     * base address of the region allocated) can go in this margin -
-     * it is only read, not written. Only relevant when jitting. */
+    /** Set a custom malloc and free for halide to use. Malloc should
+     * return 32-byte aligned chunks of memory, with 32-bytes extra
+     * allocated on the start and end so that vector loads can spill
+     * off the end slightly. Metadata (e.g. the base address of the
+     * region allocated) can go in this margin - it is only read, not
+     * written. If you are compiling statically, you can also just
+     * define your own functions with signatures 
+     \code
+     extern "C" void *malloc(size_t) 
+     extern "C" void halide_free(void *)
+     \endcode 
+     * These will clobber Halide's versions.
+     */
     EXPORT void set_custom_allocator(void *(*malloc)(size_t), void (*free)(void *));
+
+    /** Set a custom task handler to be called by the parallel for
+     * loop. It is useful to set this if you want to do some
+     * additional bookkeeping at the granularity of parallel
+     * tasks. The default implementation does this:
+     \code
+     extern "C" void halide_do_task(void (*f)(int, uint8_t *), int idx, uint8_t *state) {
+         f(idx, state);
+     }
+     \endcode
+     * If you are statically compiling, you can also just define your
+     * own version of the above function, and it will clobber Halide's
+     * version.
+     * 
+     * If you're trying to use a custom parallel runtime, you probably
+     * don't want to call this. See instead \ref Func::set_custom_do_par_for .
+    */
+    EXPORT void set_custom_do_task(void (*custom_do_task)(void (*)(int, uint8_t *), int, uint8_t *));
+
+    /** Set a custom parallel for loop launcher. Useful if your app
+     * already manages a thread pool. The default implementation is
+     * equivalent to this:
+     \code
+     extern "C" void halide_do_par_for(void (*f)(int uint8_t *), int min, int extent, uint8_t *state) {
+         parallel for (int idx = min; idx < min+extent; idx++) {
+             halide_do_task(f, idx, state);
+         }
+     }
+     \endcode
+     * If you are statically compiling, you can also just define your
+     * own version of the above function, and it will clobber Halide's
+     * version.
+     */
+    EXPORT void set_custom_do_par_for(void (*custom_do_par_for)(void (*)(int, uint8_t *), int, int, uint8_t *));
 
     /** When this function is compiled, include code that dumps its values
      * to a file after it is realized, for the purpose of debugging. 
@@ -418,12 +474,14 @@ public:
      * enough implicit vars are added to the end of the argument list
      * to make up the difference (see \ref Var::implicit) */
     // @{
-    EXPORT FuncRefVar operator()();
-    EXPORT FuncRefVar operator()(Var x);
-    EXPORT FuncRefVar operator()(Var x, Var y);
-    EXPORT FuncRefVar operator()(Var x, Var y, Var z);
-    EXPORT FuncRefVar operator()(Var x, Var y, Var z, Var w);
-    EXPORT FuncRefVar operator()(std::vector<Var>);
+    EXPORT FuncRefVar operator()() const;
+    EXPORT FuncRefVar operator()(Var x) const;
+    EXPORT FuncRefVar operator()(Var x, Var y) const;
+    EXPORT FuncRefVar operator()(Var x, Var y, Var z) const;
+    EXPORT FuncRefVar operator()(Var x, Var y, Var z, Var w) const;
+    EXPORT FuncRefVar operator()(Var x, Var y, Var z, Var w, Var u) const;
+    EXPORT FuncRefVar operator()(Var x, Var y, Var z, Var w, Var u, Var v) const;
+    EXPORT FuncRefVar operator()(std::vector<Var>) const;
     // @}
 
     /** Either calls to the function, or the left-hand-side of a
@@ -433,11 +491,13 @@ public:
      * the end of the argument list to make up the difference. (see
      * \ref Var::implicit)*/
     // @{
-    EXPORT FuncRefExpr operator()(Expr x);
-    EXPORT FuncRefExpr operator()(Expr x, Expr y);
-    EXPORT FuncRefExpr operator()(Expr x, Expr y, Expr z);
-    EXPORT FuncRefExpr operator()(Expr x, Expr y, Expr z, Expr w);
-    EXPORT FuncRefExpr operator()(std::vector<Expr>);
+    EXPORT FuncRefExpr operator()(Expr x) const;
+    EXPORT FuncRefExpr operator()(Expr x, Expr y) const;
+    EXPORT FuncRefExpr operator()(Expr x, Expr y, Expr z) const;
+    EXPORT FuncRefExpr operator()(Expr x, Expr y, Expr z, Expr w) const;
+    EXPORT FuncRefExpr operator()(Expr x, Expr y, Expr z, Expr w, Expr u) const;
+    EXPORT FuncRefExpr operator()(Expr x, Expr y, Expr z, Expr w, Expr u, Expr v) const;
+    EXPORT FuncRefExpr operator()(std::vector<Expr>) const;
     // @}
 
     /** Scheduling calls that control how the domain of this function
@@ -736,7 +796,7 @@ public:
      \endcode
      *
      */
-    operator Expr() {
+    operator Expr() const {
         return (*this)();
     }
 
@@ -748,6 +808,13 @@ public:
         (*this)() = e;
     }
 
+    /** Define a function to simply call another function. Note that
+     * this is not equivalent to the standard c++ operator=. We opt
+     * instead for consistency with Halide function definition, of
+     * which this is a degenerate case. */
+    void operator=(const Func &f) {
+        (*this)() = f();
+    }
 };
 
 
