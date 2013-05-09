@@ -12,7 +12,7 @@
 
 #include <sstream>
 
-#include <cstdio> // remove after deleting pring statements
+#include <cstdio> // remove after deleting print statements
 
 namespace Halide { 
 namespace Internal {
