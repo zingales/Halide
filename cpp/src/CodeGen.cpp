@@ -1018,7 +1018,7 @@ Expr extract_ramp_helper(const Expr op, int *n_ramps) {
 Expr extract_ramp(const Expr index) {
     int n_ramps = 0;
     Expr extracted = extract_ramp_helper(index, &n_ramps);
-    printf("num ramps is %d\n", n_ramps);
+    //printf("num ramps is %d\n", n_ramps);
     if (n_ramps==1) return extracted;
     else return index;
 }
@@ -1188,7 +1188,7 @@ void CodeGen::create_load(const Load *op, bool recurse) {
         } else {                
 	    // check for clamped vector load
 	    IRPrinter irp = IRPrinter(std::cout);
-	    printf("initial index: "); irp.print(op->index); printf("\n");
+	    //printf("initial index: "); irp.print(op->index); printf("\n");
 	    Expr new_index = extract_ramp(op->index);
 	    //printf("with conditions met: "); irp.print(new_index); printf("\n");
 	    new_index = simplify(new_index);
@@ -1196,7 +1196,7 @@ void CodeGen::create_load(const Load *op, bool recurse) {
 	    char *enabled = getenv("HL_ENABLE_CLAMPED_VECTOR_LOAD");
 	    bool is_enabled = enabled == NULL ? 0 : atoi(enabled);
 	    if (is_enabled && recurse && new_index.as<Ramp>()) {
-		printf("creating clamped vector load\n");
+		//printf("creating clamped vector load\n");
 		Expr check_min = extract_ramp_condition(op->index, NULL, false);
 		//printf("min check: "); irp.print(check_min); printf("\n");
 		check_min = simplify(check_min);
@@ -1210,7 +1210,7 @@ void CodeGen::create_load(const Load *op, bool recurse) {
 		Expr condition = new And(check_min, check_max);
 		//printf("condition: "); irp.print(condition); printf("\n");
 		condition = simplify(condition);
-		printf("simplified condition: "); irp.print(condition); printf("\n");
+		//printf("simplified condition: "); irp.print(condition); printf("\n");
 		Load simplified_load = Load(op->type, op->name, new_index,
 					    op->image, op->param);
 		
@@ -1252,7 +1252,7 @@ void CodeGen::create_load(const Load *op, bool recurse) {
 		phi->addIncoming(unbounded, unbounded_bb);
 		value = phi;
 	    } else {
-              printf("falling back on general gather\n");
+	      // printf("falling back on general gather\n");
 	      // General gathers
 	      Value *index = codegen(op->index);
 	      Value *vec = UndefValue::get(llvm_type_of(op->type));
