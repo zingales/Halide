@@ -21,6 +21,14 @@ bool EXPORT is_const(Expr e);
  * Cast, or Broadcast of the same. */
 bool EXPORT is_const(Expr e, int v);
 
+/** If an expression is an IntImm, return a pointer to its
+ * value. Otherwise returns NULL. */
+const int * EXPORT as_const_int(Expr e);
+
+/** If an expression is a FloatImm, return a pointer to its
+ * value. Otherwise returns NULL. */
+const float * EXPORT as_const_float(Expr e);
+
 /** Is the expression a constant integer power of two. Also returns
  * log base two of the expression if it is. */
 bool EXPORT is_const_power_of_two(Expr e, int *bits);
@@ -117,6 +125,18 @@ Expr EXPORT const_false(int width = 1);
  * 
  */
 void EXPORT match_types(Expr &a, Expr &b);
+
+/** Halide's vectorizable transcendentals. */
+// @{
+Expr EXPORT halide_log(Expr a);
+Expr EXPORT halide_exp(Expr a);
+// @}
+
+/** Raise an expression to an integer power by repeatedly multiplying
+ * it by itself. */
+Expr EXPORT raise_to_integer_power(Expr a, int b);
+
+
 }
 
 /** Cast an expression to the halide type corresponding to the C++ type T */
@@ -136,7 +156,7 @@ inline Expr cast(Type t, Expr a) {
             assert(b->width == t.width);
             return Internal::Broadcast::make(cast(t.element_of(), b->value), t.width);
         }
-    }
+    }    
     return Internal::Cast::make(t, a);
 }
 
@@ -494,8 +514,10 @@ inline Expr sqrt(Expr x) {
     }
 }
 
-/** Return the square root of a floating-point expression. If the
- * argument is not floating-point, is it cast to Float(32). */
+/** Return the square root of the sum of the squares of two
+ * floating-point expressions. If the argument is not floating-point,
+ * is it cast to Float(32). On platforms with a sqrt op (e.g. x86),
+ * it's faster to compute this manually using sqrt. */
 inline Expr hypot(Expr x, Expr y) {
     assert(x.defined() && y.defined() && "hypot of undefined");
     if (x.type() == Float(64)) {
@@ -509,25 +531,83 @@ inline Expr hypot(Expr x, Expr y) {
 }
 
 /** Return the exponential of a floating-point expression. If the
- * argument is not floating-point, is it cast to Float(32). */
+ * argument is not floating-point, is it cast to Float(32). For
+ * Float(64) arguments, this calls the system exp function, and does
+ * not vectorize well. For Float(32) arguments, this function is
+ * vectorizable, does the right thing for extremely small or extremely
+ * large inputs, and is accurate up to the last bit of the
+ * mantissa. */
 inline Expr exp(Expr x) {
     assert(x.defined() && "exp of undefined");
     if (x.type() == Float(64)) {
         return Internal::Call::make(Float(64), "exp_f64", vec(x), Internal::Call::Extern);
     } else {
-        return Internal::Call::make(Float(32), "exp_f32", vec(cast<float>(x)), Internal::Call::Extern);
+        // return Internal::Call::make(Float(32), "exp_f32", vec(cast<float>(x)), Internal::Call::Extern);
+        return Internal::halide_exp(cast<float>(x));
     }
 }
 
 /** Return the logarithm of a floating-point expression. If the
- * argument is not floating-point, is it cast to Float(32). */
+ * argument is not floating-point, is it cast to Float(32). For
+ * Float(64) arguments, this calls the system log function, and does
+ * not vectorize well. For Float(32) arguments, this function is
+ * vectorizable, does the right thing for inputs <= 0 (returns
+ * -inf or nan), and is accurate up to the last bit of the mantissa. */
 inline Expr log(Expr x) {
     assert(x.defined() && "log of undefined");
     if (x.type() == Float(64)) {
         return Internal::Call::make(Float(64), "log_f64", vec(x), Internal::Call::Extern);
     } else {
-        return Internal::Call::make(Float(32), "log_f32", vec(cast<float>(x)), Internal::Call::Extern);
+        // return Internal::Call::make(Float(32), "log_f32", vec(cast<float>(x)), Internal::Call::Extern);
+        return Internal::halide_log(cast<float>(x));
     }
+}
+
+/** Return one floating point expression raised to the power of
+ * another. The type of the result is given by the type of the first
+ * argument. If the first argument is not a floating-point type, it is
+ * cast to Float(32). For Float(32), cleanly vectorizable, and
+ * accurate up to the last few bits of the mantissa. Gets worse when
+ * approaching overflow. */
+inline Expr pow(Expr x, Expr y) {
+    assert(x.defined() && y.defined() && "pow of undefined");
+    
+    if (const int *i = as_const_int(y)) {
+        return raise_to_integer_power(x, *i);
+    }
+
+    if (x.type() == Float(64)) {
+        y = cast<double>(y);
+        return Internal::Call::make(Float(64), "pow_f64", vec(x, y), Internal::Call::Extern);
+    } else {
+        x = cast<float>(x);
+        y = cast<float>(y);
+        return Internal::halide_exp(Internal::halide_log(x) * y);
+    }
+}
+
+/** Fast approximate cleanly vectorizable log for Float(32). Returns
+ * nonsense for x <= 0.0f. Accurate up to the last 5 bits of the
+ * mantissa. */
+EXPORT Expr fast_log(Expr x);
+
+/** Fast approximate cleanly vectorizable exp for Float(32). Returns
+ * nonsense for inputs that would overflow or underflow. Typically
+ * accurate up to the last 5 bits of the mantissa. Gets worse when
+ * approaching overflow. */
+EXPORT Expr fast_exp(Expr x);
+
+/** Fast approximate cleanly vectorizable pow for Float(32). Returns
+ * nonsense for x < 0.0f. Accurate up to the last 5 bits of the
+ * mantissa for typical exponents. Gets worse when approaching overflow. */
+inline Expr fast_pow(Expr x, Expr y) {
+    if (const int *i = as_const_int(y)) {
+        return raise_to_integer_power(x, *i);
+    }
+
+    x = cast<float>(x);
+    y = cast<float>(y);
+    return select(x == 0.0f, 0.0f, fast_exp(fast_log(x) * y));
 }
 
 /** Return the greatest whole number less than or equal to a
@@ -566,22 +646,6 @@ inline Expr round(Expr x) {
         return Internal::Call::make(Float(64), "round_f64", vec(x), Internal::Call::Extern);
     } else {
         return Internal::Call::make(Float(32), "round_f32", vec(cast<float>(x)), Internal::Call::Extern);
-    }
-}
-
-/** Return one floating point expression raised to the power of
- * another. The type of the result is given by the type of the first
- * argument. If the first argument is not a floating-point type, it is
- * cast to Float(32) */
-inline Expr pow(Expr x, Expr y) {
-    assert(x.defined() && y.defined() && "pow of undefined");
-    if (x.type() == Float(64)) {
-        y = cast<double>(y);
-        return Internal::Call::make(Float(64), "pow_f64", vec(x, y), Internal::Call::Extern);
-    } else {
-        x = cast<float>(x);
-        y = cast<float>(y);
-        return Internal::Call::make(Float(32), "pow_f32", vec(x, y), Internal::Call::Extern);
     }
 }
 
