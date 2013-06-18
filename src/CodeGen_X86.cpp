@@ -471,229 +471,185 @@ void CodeGen_X86::visit(const Max *op) {
     }    
 }
 
-#if 0
-Expr extract_ramp_condition(const Expr op, int *n_ramps, bool replace_max) {
-
-    // get condition from clamped index
-    // (convert min/max to GE/LE on bounds of ramp indices)
-
-    const Add *asAdd = op.as<Add>();
-    const Sub *asSub = op.as<Sub>();
-    const Mul *asMul = op.as<Mul>();
-    const Max *asMax = op.as<Max>();
-    const Min *asMin = op.as<Min>();
-    const Ramp *asRamp = op.as<Ramp>();
-    const Broadcast *asBroadcast = op.as<Broadcast>();
-    Expr ret, a, b;
-    int n_ramps_a = 0, n_ramps_b = 0;
-    if (asAdd) {
-        // add
-        a = extract_ramp_condition(asAdd->a, &n_ramps_a, replace_max);
-        b = extract_ramp_condition(asAdd->b, &n_ramps_b, replace_max);
-        if (n_ramps_a==1 && n_ramps_b==0) ret = a;
-        else if (n_ramps_a==0 && n_ramps_b==1) ret = b;
-        else ret = op;
-    } else if (asSub) {
-        // subtract
-        a = extract_ramp_condition(asSub->a, &n_ramps_a, replace_max);
-        b = extract_ramp_condition(asSub->b, &n_ramps_b, replace_max);
-        if (n_ramps_a==1 && n_ramps_b==0) ret = a;
-        else if (n_ramps_a==0 && n_ramps_b==1) ret = b;
-        else ret = op;
-    } else if (asMul) {
-        // multiply
-        a = extract_ramp_condition(asMul->a, &n_ramps_a, replace_max);
-        b = extract_ramp_condition(asMul->b, &n_ramps_b, replace_max);
-        if (n_ramps_a==1 && n_ramps_b==0) ret = a;
-        else if (n_ramps_a==0 && n_ramps_b==1) ret = b;
-        else ret = op;
-    } else if (asMax) {
-        a = extract_ramp_condition(asMax->a, &n_ramps_a, replace_max);
-        b = extract_ramp_condition(asMax->b, &n_ramps_b, replace_max);
-        // if replacing max, replace with appropriate GE
-        if (replace_max && n_ramps_a==1 && n_ramps_b==0) ret = GE::make(a, b);
-        else if (replace_max && n_ramps_a==0 && n_ramps_b==1) ret = GE::make(b, a);
-        else if (n_ramps_a==1 && n_ramps_b==0) ret = a;
-        else if (n_ramps_a==0 && n_ramps_b==1) ret = b;
-        else ret = op;
-    } else if (asMin) {
-        // min - if a or b has ramp, replace
-        a = extract_ramp_condition(asMin->a, &n_ramps_a, replace_max);
-        b = extract_ramp_condition(asMin->b, &n_ramps_b, replace_max);
-        // if replacing max, replace with appropriate LE
-        if (!replace_max && n_ramps_a==1 && n_ramps_b==0) ret = LE::make(a, b);
-        else if (!replace_max && n_ramps_a==0 && n_ramps_b==1) ret = LE::make(b, a);
-        else if (n_ramps_a==1 && n_ramps_b==0) ret = a;
-        else if (n_ramps_a==0 && n_ramps_b==1) ret = b;
-        else ret = op;
-    } else if (asRamp) {
-        // we found a ramp
-        n_ramps_a = 1;
-  
-        }
-    } else if (asBroadcast) {
-        ret = asBroadcast->value;
-    } else {
-        ret = op;
-    }
-    if (n_ramps) *n_ramps = *n_ramps + n_ramps_a + n_ramps_b;
-    return ret;
-}
-#endif
-
 /** Walks a load index, looking for a ramp surrounded by mins and maxes.
- * Returns a expression either checking that largest value the ramp takes
- * on is less than the max bound or that the smallest value the ramp takes
- * on is greater than the min bound (depending on the value of extract_min_bound
- * assigned at initialization).
+ * Returns an expression either checking that largest value the ramp takes
+ * on is less than the max bound (if extract_bound_from_min is set to false)
+ * or that the smallest value the ramp takes on is greater than the min bound
+ * (if extract_bound_from_min is set to true).
  *
- * If both these conditions are satisfied, we can do a dense load.
+ * If both these conditions are satisfied, the entire ramp index fits within
+ * the bounds and we can do a dense load.
  */
 class ExtractDenseLoadCondition : public IRMutator {
 public:
-    ExtractDenseLoadCondition(bool ex_min_bnd) : extract_min_bound(ex_min_bnd),
-                                                 found_ramp(false),
-                                                 inside_min(false),
-                                                 inside_max(false) {}
+    ExtractDenseLoadCondition(bool extract_bound_from_min) : extract_bound_from_min(extract_bound_from_min),
+                                                             found_ramp(false),
+                                                             inside_min(false),
+                                                             inside_max(false),
+                                                             ramp_is_inside_min(false),
+                                                             ramp_is_inside_max(false) {}
 private:
-    bool extract_min_bound, found_ramp, inside_min, inside_max;
+    bool extract_bound_from_min, found_ramp, inside_min, inside_max,
+        ramp_is_inside_min, ramp_is_inside_max;
 
     using IRMutator::visit;
 
     void visit(const Add *op) {
-        if (found_ramp) {
-            expr = op;
+        Expr a = mutate(op->a);
+        Expr b = mutate(op->b);
+        if (a.as<GE>() || a.as<LE>()) {
+            expr = a;
+        } else if (b.as<GE>() || b.as<LE>()) {
+            expr = b;
         } else {
-            Expr a = mutate(op->a);
-            bool found_ramp_a = found_ramp;
-            found_ramp = false;
-            Expr b = mutate(op->b);
-            bool found_ramp_b = found_ramp;
-            found_ramp = found_ramp_a || found_ramp_b;
-            if (found_ramp_a) {
-                expr = a;
-            } else if (found_ramp_b) {
-                expr = b;
-            } else {
-                expr = op;
-            }
+            expr = Add::make(a, b);
         }
     }
 
     void visit(const Sub *op) {
-        if (found_ramp) {
-            expr = op;
+        Expr a = mutate(op->a);
+        Expr b = mutate(op->b);
+        if (a.as<GE>() || a.as<LE>()) {
+            expr = a;
+        } else if (b.as<GE>() || b.as<LE>()) {
+            expr = b;
         } else {
-            Expr a = mutate(op->a);
-            bool found_ramp_a = found_ramp;
-            found_ramp = false;
-            Expr b = mutate(op->b);
-            bool found_ramp_b = found_ramp;
-            found_ramp = found_ramp_a || found_ramp_b;
-            if (found_ramp_a) {
-                expr = a;
-            } else if (found_ramp_b) {
-                expr = b;
-            } else {
-                expr = op;
-            }
+            expr = Sub::make(a, b);
+        }
+    }
+
+    void visit(const Mul *op) {
+        Expr a = mutate(op->a);
+        Expr b = mutate(op->b);
+        if (a.as<GE>() || a.as<LE>()) {
+            expr = a;
+        } else if (b.as<GE>() || b.as<LE>()) {
+            expr = b;
+        } else {
+            expr = Mul::make(a, b);
         }
     }
 
     void visit(const Min *op) {
-        printf("inside min visitor\n");
         if (inside_min || found_ramp) {
             // skip if we've alread found a ramp or are too deep in mins
             expr = op;
         } else {
             inside_min = true;
-            Expr maybe_upper_bound_of_ramp;
-            Expr broadcast_value;
-            const Broadcast *a_as_broadcast = op->a.as<Broadcast>();
-            const Broadcast *b_as_broadcast = op->b.as<Broadcast>();
-            if (a_as_broadcast) {
-                maybe_upper_bound_of_ramp = mutate(op->b);
-                broadcast_value = a_as_broadcast->value;
-            } else if (b_as_broadcast) {
-                maybe_upper_bound_of_ramp = mutate(op->a);
-                broadcast_value = b_as_broadcast->value;
-            }
-            if (found_ramp) {
-                if (extract_min_bound) {
-                    expr = LE::make(maybe_upper_bound_of_ramp, broadcast_value);
+            // check left and right expressions for ramps
+            Expr a = mutate(op->a);
+            bool found_ramp_a = found_ramp;
+            found_ramp = false;
+            Expr b = mutate(op->b);
+            bool found_ramp_b = found_ramp;
+            found_ramp = found_ramp_a || found_ramp_b;
+            if (!found_ramp) {
+                expr = Min::make(a, b);
+            } else { 
+                if (!extract_bound_from_min) {
+                    // if we've found a ramp in a or b, but aren't supposed to extract
+                    // the bound from it, we just pass it through - unless there is a
+                    // superfluous bounds check (e.g. checking the high bound of a
+                    // ramp that is only inside of a max) and we're the outermost
+                    // min or max, in which case we should trivially return true
+                    if (ramp_is_inside_max) {
+                        // if ramp is inside max it's already taken care of
+                        expr = found_ramp_a ? a : b; 
+                    } else {
+                        expr = true;
+                    }
                 } else {
-                    expr = maybe_upper_bound_of_ramp;
+                    // if we are supposed to extract the bound, we replace ourselves
+                    // with a LE expression comparing the extreme value of the ramp
+                    // with the bound
+                    Expr extreme_value_of_ramp, bound;
+                    extreme_value_of_ramp = found_ramp_a ? a : b;
+                    bound = found_ramp_a ? b : a;
+                    expr = LE::make(extreme_value_of_ramp, bound);
                 }
-            } else {
-                expr = op;
             }
             inside_min = false;
         }
     }
-    
+
     void visit(const Max *op) {
-        printf("inside max visitor\n");
         if (inside_max || found_ramp) {
             // skip if we've alread found a ramp or are too deep in mins
             expr = op;
         } else {
             inside_max = true;
-            Expr maybe_lower_bound_of_ramp;
-            Expr broadcast_value;
-            const Broadcast *a_as_broadcast = op->a.as<Broadcast>();
-            const Broadcast *b_as_broadcast = op->b.as<Broadcast>();
-            if (a_as_broadcast) {
-                maybe_lower_bound_of_ramp = mutate(op->b);
-                broadcast_value = a_as_broadcast->value;
-            } else if (b_as_broadcast) {
-                maybe_lower_bound_of_ramp = mutate(op->a);
-                broadcast_value = b_as_broadcast->value;
-            }
-            if (found_ramp) {
-                if (!extract_min_bound) {
-                    expr = GE::make(maybe_lower_bound_of_ramp, broadcast_value);
+            // check left and right expressions for ramps
+            Expr a = mutate(op->a);
+            bool found_ramp_a = found_ramp;
+            found_ramp = false;
+            Expr b = mutate(op->b);
+            bool found_ramp_b = found_ramp;
+            found_ramp = found_ramp_a || found_ramp_b;
+            if (!found_ramp) {
+                expr = Max::make(a, b);
+            } else { 
+                if (extract_bound_from_min) {
+                    // if we've found a ramp in a or b, but aren't supposed to extract
+                    // the bound from it, we just pass it through - unless there is a
+                    // superfluous bounds check (e.g. checking the high bound of a
+                    // ramp that is only inside of a max) and we're the outermost
+                    // min or max, in which case we should trivially return true
+                    if (ramp_is_inside_min) {
+                        // if ramp is inside max it's already taken care of
+                        expr = found_ramp_a ? a : b; 
+                    } else {
+                        expr = true;
+                    }
                 } else {
-                    expr = maybe_lower_bound_of_ramp;
+                    // if we are supposed to extract the bound, we replace ourselves
+                    // with a GE expression comparing the extreme value of the ramp
+                    // with the bound
+                    Expr extreme_value_of_ramp, bound;
+                    extreme_value_of_ramp = found_ramp_a ? a : b;
+                    bound = found_ramp_a ? b : a;
+                    expr = GE::make(extreme_value_of_ramp, bound);
                 }
-            } else {
-                expr = op;
             }
             inside_max = false;
         }
     }
-
+        
     void visit(const Broadcast *op) {
-        printf("inside broadcast visitor\n");
         expr = mutate(op->value);
     }
     
     void visit(const Ramp *op) {
-        printf("inside ramp visitor\n");
         if (inside_min || inside_max) {
+            // replace ramp with extremum value, either highest or lowest
+            // depending on which bound we are checking
             found_ramp = true;
+            ramp_is_inside_min = inside_min;
+            ramp_is_inside_max = inside_max;
             int stride = op->stride.as<IntImm>()->value;
             // if stride is positive and extracting bound that satisfies min
             // use base + width (or if stride is negative and extracting bound
             // that satisfies max condition)
-            if ((stride > 0 && extract_min_bound) || 
-                (stride < 0 && !extract_min_bound)) {
-                expr = op->base + (op->width*op->stride);
+            if ((stride > 0 && extract_bound_from_min) || 
+                (stride < 0 && !extract_bound_from_min)) {
+                expr = op->base + ((op->width - 1)*op->stride);
             } else {
                 expr = op->base;
             }
         } else {
+            // we only expect there to be one ramp in a load index
+            assert(false && "should only have ramp inside min or max");
             expr = op;
         }
     }
 };
     
-Expr extract_dense_load_condition(bool extract_min_bound, Expr foo) {
-    ExtractDenseLoadCondition e(extract_min_bound);
-    return e.mutate(foo);
+Expr extract_dense_load_condition(bool extract_bound_from_min, const Load *op) {
+    ExtractDenseLoadCondition e(extract_bound_from_min);
+    return e.mutate(op->index);
 }
     
 /** Walks a load index, looking for expressions that match the pattern
- * Min/Max(broadcast, expression containing ramp). Replaces these expressions
+ * Min/Max(broadcast, expression containing ramp). Replaces a found min/max
  * with the expression containing the ramp. The resulting expression is
  * equivalent to the original expression when all of the bounds conditions
  * enforced by the mins and maxes are satisfied.
@@ -701,9 +657,9 @@ Expr extract_dense_load_condition(bool extract_min_bound, Expr foo) {
  * To make things simple for now, only look for a single ramp inside at most
  * one min and one max expression.
  */
-class FreeClampedRamp : public IRMutator {
+class ExtractDenseLoadIndex : public IRMutator {
 public:
-    FreeClampedRamp() : found_ramp(false),
+    ExtractDenseLoadIndex() : found_ramp(false),
                         inside_min(false),
                         inside_max(false) {}
 private:
@@ -763,16 +719,16 @@ private:
     }
 };
     
-Expr free_clamped_ramp(Expr foo) {
-    FreeClampedRamp f;
-    return f.mutate(foo);
+Expr extract_dense_load_index(const Load *op) {
+    ExtractDenseLoadIndex e;
+    return e.mutate(op->index);
 }
 
 void CodeGen_X86::visit(const Load *op) {
     
     IRPrinter irp = IRPrinter(std::cout);
 
-    Expr new_index = free_clamped_ramp(op->index);
+    Expr new_index = extract_dense_load_index(op);
     new_index = simplify(new_index);
 
     printf("FOO new idx: "); irp.print(simplify(new_index)); printf("\n");
@@ -781,13 +737,13 @@ void CodeGen_X86::visit(const Load *op) {
         // only do clamped vector load if we didn't already have a ramp index
         // Expr check_min = extract_ramp_condition(op->index, NULL, false);
         printf("FOO old idx: "); irp.print(simplify(op->index)); printf("\n");
-        Expr check_min = extract_dense_load_condition(true, op->index);
+        Expr check_min = extract_dense_load_condition(true, op);
         check_min = simplify(check_min);
 
         printf("min check: "); irp.print(check_min); printf("\n");
         
         //Expr check_max = extract_ramp_condition(op->index, NULL, true);
-        Expr check_max = extract_dense_load_condition(false, op->index);
+        Expr check_max = extract_dense_load_condition(false, op);
         check_max = simplify(check_max);
 
         printf("max check: "); irp.print(check_max); printf("\n");
