@@ -14,8 +14,6 @@
 #include "integer_division_table.h"
 #include "LLVM_Headers.h"
 
-// #include <cstdio>
-
 extern "C" unsigned char halide_internal_initmod_x86[];
 extern "C" int halide_internal_initmod_x86_length;
 extern "C" unsigned char halide_internal_initmod_x86_32[];
@@ -473,6 +471,7 @@ void CodeGen_X86::visit(const Max *op) {
     }    
 }
 
+#if 0
 Expr extract_ramp_condition(const Expr op, int *n_ramps, bool replace_max) {
 
     // get condition from clamped index
@@ -530,12 +529,7 @@ Expr extract_ramp_condition(const Expr op, int *n_ramps, bool replace_max) {
     } else if (asRamp) {
         // we found a ramp
         n_ramps_a = 1;
-        int stride = asRamp->stride.as<IntImm>()->value;
-        // if stride is positive and replacing max, use base (or negative and not replacing max)
-        if ((replace_max && stride > 0) || (!replace_max && stride < 0)) {
-            ret = asRamp->base;
-        } else {
-            ret = asRamp->base + (asRamp->width*asRamp->stride);
+  
         }
     } else if (asBroadcast) {
         ret = asBroadcast->value;
@@ -545,16 +539,159 @@ Expr extract_ramp_condition(const Expr op, int *n_ramps, bool replace_max) {
     if (n_ramps) *n_ramps = *n_ramps + n_ramps_a + n_ramps_b;
     return ret;
 }
+#endif
 
 /** Walks a load index, looking for a ramp surrounded by mins and maxes.
  * Returns a expression either checking that largest value the ramp takes
  * on is less than the max bound or that the smallest value the ramp takes
- * on is greater than the min bound (depending on how it is initialized).
+ * on is greater than the min bound (depending on the value of extract_min_bound
+ * assigned at initialization).
+ *
  * If both these conditions are satisfied, we can do a dense load.
  */
+class ExtractDenseLoadCondition : public IRMutator {
+public:
+    ExtractDenseLoadCondition(bool ex_min_bnd) : extract_min_bound(ex_min_bnd),
+                                                 found_ramp(false),
+                                                 inside_min(false),
+                                                 inside_max(false) {}
+private:
+    bool extract_min_bound, found_ramp, inside_min, inside_max;
 
+    using IRMutator::visit;
 
+    void visit(const Add *op) {
+        if (found_ramp) {
+            expr = op;
+        } else {
+            Expr a = mutate(op->a);
+            bool found_ramp_a = found_ramp;
+            found_ramp = false;
+            Expr b = mutate(op->b);
+            bool found_ramp_b = found_ramp;
+            found_ramp = found_ramp_a || found_ramp_b;
+            if (found_ramp_a) {
+                expr = a;
+            } else if (found_ramp_b) {
+                expr = b;
+            } else {
+                expr = op;
+            }
+        }
+    }
 
+    void visit(const Sub *op) {
+        if (found_ramp) {
+            expr = op;
+        } else {
+            Expr a = mutate(op->a);
+            bool found_ramp_a = found_ramp;
+            found_ramp = false;
+            Expr b = mutate(op->b);
+            bool found_ramp_b = found_ramp;
+            found_ramp = found_ramp_a || found_ramp_b;
+            if (found_ramp_a) {
+                expr = a;
+            } else if (found_ramp_b) {
+                expr = b;
+            } else {
+                expr = op;
+            }
+        }
+    }
+
+    void visit(const Min *op) {
+        printf("inside min visitor\n");
+        if (inside_min || found_ramp) {
+            // skip if we've alread found a ramp or are too deep in mins
+            expr = op;
+        } else {
+            inside_min = true;
+            Expr maybe_upper_bound_of_ramp;
+            Expr broadcast_value;
+            const Broadcast *a_as_broadcast = op->a.as<Broadcast>();
+            const Broadcast *b_as_broadcast = op->b.as<Broadcast>();
+            if (a_as_broadcast) {
+                maybe_upper_bound_of_ramp = mutate(op->b);
+                broadcast_value = a_as_broadcast->value;
+            } else if (b_as_broadcast) {
+                maybe_upper_bound_of_ramp = mutate(op->a);
+                broadcast_value = b_as_broadcast->value;
+            }
+            if (found_ramp) {
+                if (extract_min_bound) {
+                    expr = LE::make(maybe_upper_bound_of_ramp, broadcast_value);
+                } else {
+                    expr = maybe_upper_bound_of_ramp;
+                }
+            } else {
+                expr = op;
+            }
+            inside_min = false;
+        }
+    }
+    
+    void visit(const Max *op) {
+        printf("inside max visitor\n");
+        if (inside_max || found_ramp) {
+            // skip if we've alread found a ramp or are too deep in mins
+            expr = op;
+        } else {
+            inside_max = true;
+            Expr maybe_lower_bound_of_ramp;
+            Expr broadcast_value;
+            const Broadcast *a_as_broadcast = op->a.as<Broadcast>();
+            const Broadcast *b_as_broadcast = op->b.as<Broadcast>();
+            if (a_as_broadcast) {
+                maybe_lower_bound_of_ramp = mutate(op->b);
+                broadcast_value = a_as_broadcast->value;
+            } else if (b_as_broadcast) {
+                maybe_lower_bound_of_ramp = mutate(op->a);
+                broadcast_value = b_as_broadcast->value;
+            }
+            if (found_ramp) {
+                if (!extract_min_bound) {
+                    expr = GE::make(maybe_lower_bound_of_ramp, broadcast_value);
+                } else {
+                    expr = maybe_lower_bound_of_ramp;
+                }
+            } else {
+                expr = op;
+            }
+            inside_max = false;
+        }
+    }
+
+    void visit(const Broadcast *op) {
+        printf("inside broadcast visitor\n");
+        expr = mutate(op->value);
+    }
+    
+    void visit(const Ramp *op) {
+        printf("inside ramp visitor\n");
+        if (inside_min || inside_max) {
+            found_ramp = true;
+            int stride = op->stride.as<IntImm>()->value;
+            // if stride is positive and extracting bound that satisfies min
+            // use base + width (or if stride is negative and extracting bound
+            // that satisfies max condition)
+            if ((stride > 0 && extract_min_bound) || 
+                (stride < 0 && !extract_min_bound)) {
+                expr = op->base + (op->width*op->stride);
+            } else {
+                expr = op->base;
+            }
+        } else {
+            expr = op;
+        }
+    }
+};
+    
+Expr extract_dense_load_condition(bool extract_min_bound, Expr foo) {
+    ExtractDenseLoadCondition e(extract_min_bound);
+    return e.mutate(foo);
+}
+    
 /** Walks a load index, looking for expressions that match the pattern
  * Min/Max(broadcast, expression containing ramp). Replaces these expressions
  * with the expression containing the ramp. The resulting expression is
@@ -642,12 +779,15 @@ void CodeGen_X86::visit(const Load *op) {
 
     if (!op->index.as<Ramp>() && new_index.as<Ramp>()) {
         // only do clamped vector load if we didn't already have a ramp index
-        Expr check_min = extract_ramp_condition(op->index, NULL, false);
+        // Expr check_min = extract_ramp_condition(op->index, NULL, false);
+        printf("FOO old idx: "); irp.print(simplify(op->index)); printf("\n");
+        Expr check_min = extract_dense_load_condition(true, op->index);
         check_min = simplify(check_min);
 
         printf("min check: "); irp.print(check_min); printf("\n");
         
-        Expr check_max = extract_ramp_condition(op->index, NULL, true);
+        //Expr check_max = extract_ramp_condition(op->index, NULL, true);
+        Expr check_max = extract_dense_load_condition(false, op->index);
         check_max = simplify(check_max);
 
         printf("max check: "); irp.print(check_max); printf("\n");
