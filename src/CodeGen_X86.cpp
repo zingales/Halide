@@ -777,11 +777,10 @@ void CodeGen_X86::visit(const Load *op) {
         Value *bounded = value;
         builder->CreateBr(after_bb);
         
-        // For unbounded case, create_load will fall through to general gather
-        // (with recurse set to false)
+        // for unbounded case, revert to default
         builder->SetInsertPoint(unbounded_bb);
         value = NULL;
-        CodeGen::visit(&simplified_load);
+        CodeGen::visit(op);
         Value *unbounded = value;
         builder->CreateBr(after_bb);
         
