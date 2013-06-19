@@ -687,6 +687,10 @@ Expr extract_dense_load_index(const Load *op) {
 }
 
 void CodeGen_X86::visit(const Load *op) {
+
+    // for testing
+    char *enabled = getenv("HL_ENABLE_CLAMPED_VECTOR_LOAD");
+    bool is_enabled = enabled == NULL ? 0 : atoi(enabled);
     
     IRPrinter irp = IRPrinter(std::cout);
 
@@ -695,7 +699,7 @@ void CodeGen_X86::visit(const Load *op) {
 
     printf("FOO new idx: "); irp.print(simplify(new_index)); printf("\n");
 
-    if (!op->index.as<Ramp>() && new_index.as<Ramp>()) {
+    if (is_enabled && !op->index.as<Ramp>() && new_index.as<Ramp>()) {
         // only do clamped vector load if we didn't already have a ramp index
         // Expr check_min = extract_ramp_condition(op->index, NULL, false);
         printf("FOO old idx: "); irp.print(simplify(op->index)); printf("\n");
