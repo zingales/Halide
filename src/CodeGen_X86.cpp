@@ -478,61 +478,28 @@ void CodeGen_X86::visit(const Max *op) {
  * (if extract_bound_from_min is set to true).
  *
  * If both these conditions are satisfied, the entire ramp index fits within
- * the bounds and we can do a dense load.
+ * the clamp bounds and we can do a dense load.
  */
 class ExtractDenseLoadCondition : public IRMutator {
 public:
-    ExtractDenseLoadCondition(bool extract_bound_from_min) : extract_bound_from_min(extract_bound_from_min),
+    // save condition expression here - default to true in case this doesn't get
+    // overwritten (due to the index being only a min or max rather than a clamp,
+    // and thus only requiring a single bounds check)
+    Expr condition;
+    ExtractDenseLoadCondition(bool extract_bound_from_min) : condition(true),
+                                                             extract_bound_from_min(extract_bound_from_min),
                                                              found_ramp(false),
                                                              inside_min(false),
-                                                             inside_max(false),
-                                                             ramp_is_inside_min(false),
-                                                             ramp_is_inside_max(false) {}
+                                                             inside_max(false) {}
 private:
-    bool extract_bound_from_min, found_ramp, inside_min, inside_max,
-        ramp_is_inside_min, ramp_is_inside_max;
+    bool extract_bound_from_min, found_ramp, inside_min, inside_max;
 
     using IRMutator::visit;
 
-    void visit(const Add *op) {
-        Expr a = mutate(op->a);
-        Expr b = mutate(op->b);
-        if (a.as<GE>() || a.as<LE>()) {
-            expr = a;
-        } else if (b.as<GE>() || b.as<LE>()) {
-            expr = b;
-        } else {
-            expr = Add::make(a, b);
-        }
-    }
-
-    void visit(const Sub *op) {
-        Expr a = mutate(op->a);
-        Expr b = mutate(op->b);
-        if (a.as<GE>() || a.as<LE>()) {
-            expr = a;
-        } else if (b.as<GE>() || b.as<LE>()) {
-            expr = b;
-        } else {
-            expr = Sub::make(a, b);
-        }
-    }
-
-    void visit(const Mul *op) {
-        Expr a = mutate(op->a);
-        Expr b = mutate(op->b);
-        if (a.as<GE>() || a.as<LE>()) {
-            expr = a;
-        } else if (b.as<GE>() || b.as<LE>()) {
-            expr = b;
-        } else {
-            expr = Mul::make(a, b);
-        }
-    }
-
     void visit(const Min *op) {
         if (inside_min || found_ramp) {
-            // skip if we've alread found a ramp or are too deep in mins
+            // skip if we've alread found a ramp or for some reason there are nested mins
+            // (be conservative for now)
             expr = op;
         } else {
             inside_min = true;
@@ -543,38 +510,31 @@ private:
             Expr b = mutate(op->b);
             bool found_ramp_b = found_ramp;
             found_ramp = found_ramp_a || found_ramp_b;
-            if (!found_ramp) {
-                expr = Min::make(a, b);
-            } else { 
+            if (found_ramp) {
                 if (!extract_bound_from_min) {
                     // if we've found a ramp in a or b, but aren't supposed to extract
-                    // the bound from it, we just pass it through - unless there is a
-                    // superfluous bounds check (e.g. checking the high bound of a
-                    // ramp that is only inside of a max) and we're the outermost
-                    // min or max, in which case we should trivially return true
-                    if (ramp_is_inside_max) {
-                        // if ramp is inside max it's already taken care of
-                        expr = found_ramp_a ? a : b; 
-                    } else {
-                        expr = true;
-                    }
+                    // the bound from it, we just pass it through - there might be a
+                    // max expression higher in the tree that will use this
+                    expr = found_ramp_a ? a : b; 
                 } else {
-                    // if we are supposed to extract the bound, we replace ourselves
-                    // with a LE expression comparing the extreme value of the ramp
-                    // with the bound
+                    // if we are supposed to extract the condition, we save a LE expression
+                    // comparing the extreme value of the ramp with the bound
+                    // (min condition is satisfied if largest value in ramp is less than
+                    // the bound)
                     Expr extreme_value_of_ramp, bound;
                     extreme_value_of_ramp = found_ramp_a ? a : b;
                     bound = found_ramp_a ? b : a;
-                    expr = LE::make(extreme_value_of_ramp, bound);
+                    condition = LE::make(extreme_value_of_ramp, bound);
                 }
             }
+            expr = Min::make(a, b);
             inside_min = false;
         }
     }
 
     void visit(const Max *op) {
         if (inside_max || found_ramp) {
-            // skip if we've alread found a ramp or are too deep in mins
+            // skip if we've alread found a ramp or are too deep in maxes
             expr = op;
         } else {
             inside_max = true;
@@ -585,36 +545,30 @@ private:
             Expr b = mutate(op->b);
             bool found_ramp_b = found_ramp;
             found_ramp = found_ramp_a || found_ramp_b;
-            if (!found_ramp) {
-                expr = Max::make(a, b);
-            } else { 
+            if (found_ramp) {
                 if (extract_bound_from_min) {
                     // if we've found a ramp in a or b, but aren't supposed to extract
-                    // the bound from it, we just pass it through - unless there is a
-                    // superfluous bounds check (e.g. checking the high bound of a
-                    // ramp that is only inside of a max) and we're the outermost
-                    // min or max, in which case we should trivially return true
-                    if (ramp_is_inside_min) {
-                        // if ramp is inside max it's already taken care of
-                        expr = found_ramp_a ? a : b; 
-                    } else {
-                        expr = true;
-                    }
+                    // the bound from it, we just pass it through - there might be a
+                    // min expression higher in the tree that will use this
+                    expr = found_ramp_a ? a : b; 
                 } else {
-                    // if we are supposed to extract the bound, we replace ourselves
-                    // with a GE expression comparing the extreme value of the ramp
-                    // with the bound
+                    // if we are supposed to extract the bound, we save a GE expression
+                    // comparing the extreme value of the ramp with the bound
+                    // (max condition is satisfied if smallest value in ramp is greater
+                    // than the bound)
                     Expr extreme_value_of_ramp, bound;
                     extreme_value_of_ramp = found_ramp_a ? a : b;
                     bound = found_ramp_a ? b : a;
-                    expr = GE::make(extreme_value_of_ramp, bound);
+                    condition = GE::make(extreme_value_of_ramp, bound);
                 }
             }
+            expr = Max::make(a, b);
             inside_max = false;
         }
     }
         
     void visit(const Broadcast *op) {
+        // replace vector expressions with single value for comparison
         expr = mutate(op->value);
     }
     
@@ -623,8 +577,6 @@ private:
             // replace ramp with extremum value, either highest or lowest
             // depending on which bound we are checking
             found_ramp = true;
-            ramp_is_inside_min = inside_min;
-            ramp_is_inside_max = inside_max;
             int stride = op->stride.as<IntImm>()->value;
             // if stride is positive and extracting bound that satisfies min
             // use base + width (or if stride is negative and extracting bound
@@ -645,7 +597,10 @@ private:
     
 Expr extract_dense_load_condition(bool extract_bound_from_min, const Load *op) {
     ExtractDenseLoadCondition e(extract_bound_from_min);
-    return e.mutate(op->index);
+    e.mutate(op->index);
+    // condition for dense load gets written into e.condition; the expression
+    // returned by mutate is just the extremum value of the index and is not used
+    return e.condition;
 }
     
 /** Walks a load index, looking for expressions that match the pattern
@@ -680,9 +635,12 @@ private:
                 maybe_ramp = mutate(op->a);
             }
             if (found_ramp) {
-                // maybe_ramp will have been initialized now
+                // maybe_ramp will have been initialized now so we
+                // pass through the side of the min containing the ramp
                 expr = maybe_ramp;
             } else {
+                // otherwise we just leave things as are, because the
+                // index expression often contains other mins or maxes
                 expr = op;
             }
             inside_min = false;
@@ -702,9 +660,12 @@ private:
                 maybe_ramp = mutate(op->a);
             }
             if (found_ramp) {
-                // maybe_ramp will have been initialized now
+                // maybe_ramp will have been initialized now so we
+                // pass through the side of the min containing the ramp
                 expr = maybe_ramp;
             } else {
+                // otherwise we just leave things as are, because the
+                // index expression often contains other mins or maxes
                 expr = op;
             }
             inside_max = false;
@@ -712,6 +673,7 @@ private:
     }
     
     void visit(const Ramp *op) {
+        // here all we want to do is note that we found a ramp
         if (inside_min || inside_max) {
             found_ramp = true;
         }
