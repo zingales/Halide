@@ -14,6 +14,15 @@ LLVM_LIBDIR = $(shell $(LLVM_CONFIG) --libdir)
 LLVM_AS = $(LLVM_BINDIR)/llvm-as
 LLVM_CXX_FLAGS = $(shell $(LLVM_CONFIG) --cppflags)
 
+# Tests can be compiled statically (not-JIT) for a target platform and run
+# either under a simulator of via remote execution.
+# TARGET_CXX is the C++ compiler for the target execution environment.
+# By default, assume the host and the target are the same
+TARGET_CXX ?= $(CXX)
+# STATIC_TEST_RUNNER takes a command line and runs it in the target environment
+# By default, run static tests with no shell adornment on the host.
+STATIC_TEST_RUNNER ?=
+
 # llvm_config doesn't always point to the correct include
 # directory. We haven't figured out why yet.
 LLVM_CXX_FLAGS += -I$(shell $(LLVM_CONFIG) --src-root)/include
@@ -150,12 +159,19 @@ tests: build_tests run_tests
 
 run_tests: $(TESTS:test/%.cpp=test_%) $(ERROR_TESTS:test/error/%.cpp=error_%) $(TUTORIALS:tutorial/%.cpp=tutorial_%)
 build_tests: $(TESTS:test/%.cpp=$(BIN_DIR)/test_%) $(ERROR_TESTS:test/error/%.cpp=$(BIN_DIR)/error_%) $(TUTORIAL:tutorial/%.cpp=$(BIN_DIR)/tutorial_%)
+run_static_tests: $(TESTS:test/%.cpp=static_test_%)
 
 $(BIN_DIR)/test_internal: test/internal.cpp $(BIN_DIR)/libHalide.so
 	$(CXX) $(CXX_FLAGS)  $< -Isrc -L$(BIN_DIR) -lHalide -lpthread -ldl -o $@	
 
 $(BIN_DIR)/test_%: test/%.cpp $(BIN_DIR)/libHalide.so include/Halide.h
-	$(CXX) $(TEST_CXX_FLAGS) -O3 $< -Iinclude -L$(BIN_DIR) -lHalide -lpthread -ldl -o $@	
+	$(CXX) -DHALIDE_JIT $(TEST_CXX_FLAGS) -O3 $<  -Iinclude -L$(BIN_DIR) -lHalide -lpthread -ldl -o $@
+
+$(BIN_DIR)/static_test_%: test/%.cpp $(BIN_DIR)/libHalide.so include/Halide.h
+	@-mkdir -p tmp
+	$(CXX) -DHALIDE_STATIC_COMPILE $(TEST_CXX_FLAGS) -O3 $<  -Iinclude -L$(BIN_DIR) -lHalide -lpthread -ldl -o $@.hl_intermediate
+	cd tmp ; DYLD_LIBRARY_PATH=../$(BIN_DIR) LD_LIBRARY_PATH=../$(BIN_DIR) ../$@.hl_intermediate
+	shopt -s nullglob; $(TARGET_CXX) -DHALIDE_STATIC_RUN $(TEST_CXX_FLAGS) -O3 $< -Itmp -Iinclude tmp/hl_$*_hl*.o -L$(BIN_DIR) -lpthread -ldl -o $@
 
 $(BIN_DIR)/error_%: test/error/%.cpp $(BIN_DIR)/libHalide.so include/Halide.h
 	$(CXX) $(TEST_CXX_FLAGS) -O3 $< -Iinclude -L$(BIN_DIR) -lHalide -lpthread -ldl -o $@	
@@ -171,6 +187,11 @@ test_%: $(BIN_DIR)/test_%
 error_%: $(BIN_DIR)/error_%
 	@-mkdir -p tmp
 	cd tmp ; DYLD_LIBRARY_PATH=../$(BIN_DIR) LD_LIBRARY_PATH=../$(BIN_DIR) ../$< 2>&1 | egrep --q "Assertion.*failed"
+	@-echo
+
+static_test_%: $(BIN_DIR)/static_test_%
+	@-mkdir -p tmp
+	cd tmp ; DYLD_LIBRARY_PATH=../$(BIN_DIR) LD_LIBRARY_PATH=../$(BIN_DIR) ../$<
 	@-echo
 
 tutorial_%: $(BIN_DIR)/tutorial_%

@@ -1,9 +1,12 @@
-#include <stdio.h>
+#if !HALIDE_STATIC_RUN
 #include <Halide.h>
-
 using namespace Halide;
+#endif
+
+#include <stdio.h>
 
 int main(int argc, char **argv) {
+#if !HALIDE_STATIC_RUN
     Var x;
 
     Expr int_expr[4], uint_expr[4], double_expr, float_expr;
@@ -31,6 +34,7 @@ int main(int argc, char **argv) {
         a += 1.0f + uint_expr[i];
         assert(a.type() == int_expr[i].type());
     }
+#endif
 
     printf("Success!\n");
     return 0;

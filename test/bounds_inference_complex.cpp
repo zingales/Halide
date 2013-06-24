@@ -1,9 +1,15 @@
-#include <stdio.h>
+#if !HALIDE_STATIC_RUN
 #include <Halide.h>
-
 using namespace Halide;
+#else
+#include "hl_bounds_inference_complex_hl.h"
+#include "../apps/support/static_image.h"
+#endif
+
+#include <stdio.h>
 
 int main(int argc, char **argv) {
+#if !HALIDE_STATIC_RUN
     const int K = 8;
 
     Func f[K]; Var x, y;
@@ -24,8 +30,20 @@ int main(int argc, char **argv) {
             f[i].vectorize(x, 4);
         }
     }
+#endif
 
+#if HALIDE_STATIC_COMPILE
+    f[K-1].compile_to_file("hl_bounds_inference_complex_hl");
+#endif
+
+#if HALIDE_STATIC_RUN
+    Image<int> out(32, 32);
+    hl_bounds_inference_complex_hl(out);
+#endif
+
+#if HALIDE_JIT
     Image<int> out = f[K-1].realize(32, 32);
+#endif
 
     printf("Success!\n");
     return 0;

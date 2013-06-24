@@ -1,9 +1,16 @@
 #include <stdio.h>
-#include <Halide.h>
 
+#if !HALIDE_STATIC_RUN
+#include <Halide.h>
 using namespace Halide;
+#else
+#include "hl_bound_hl_f.h"
+#include "hl_bound_hl_g.h"
+#include "../apps/support/static_image.h"
+#endif
 
 int main(int argc, char **argv) {
+#if !HALIDE_STATIC_RUN
     Var x, y, c;
     Func f, g, h;
 
@@ -11,10 +18,26 @@ int main(int argc, char **argv) {
     g(x, y, c) = f(x, y) * c;
     
     g.bound(c, 0, 3);
+#endif
     
+#if HALIDE_STATIC_COMPILE
+    f.compile_to_file("hl_bound_hl_f");
+    g.compile_to_file("hl_bound_hl_g");
+#endif
+
+#if HALIDE_STATIC_RUN
+    Image<int> imf(32, 32);
+    hl_bound_hl_f(imf);
+    Image<int> img(32, 32, 3);
+    hl_bound_hl_g(img);
+#endif
+
+#if HALIDE_JIT
     Image<int> imf = f.realize(32, 32);
     Image<int> img = g.realize(32, 32, 3);
+#endif
 
+#if !HALIDE_STATIC_COMPILE
     // Check the result was what we expected
     for (int i = 0; i < 32; i++) {
         for (int j = 0; j < 32; j++) {
@@ -32,5 +55,7 @@ int main(int argc, char **argv) {
     }
 
     printf("Success!\n");
+#endif
+
     return 0;
 }

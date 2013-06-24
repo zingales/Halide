@@ -1,9 +1,15 @@
 #include <stdio.h>
+
+#if !HALIDE_STATIC_RUN
 #include <Halide.h>
 using namespace Halide;
+#else
+#include "hl_bounds_inference_hl.h"
+#include "../apps/support/static_image.h"
+#endif
 
 int main(int argc, char **argv) {
-
+#if !HALIDE_STATIC_RUN
     Func f, g, h; Var x, y;
     
     h(x) = x;
@@ -19,10 +25,22 @@ int main(int argc, char **argv) {
         g.cuda_tile(x, 128);
         h.cuda_tile(x, 128);
     }
-    
+#endif
 
+#if HALIDE_STATIC_COMPILE
+    f.compile_to_file("hl_bounds_inference_hl");
+#endif
+
+#if HALIDE_STATIC_RUN
+    Image<int> out(32, 32);
+    hl_bounds_inference_hl(out);
+#endif
+
+#if HALIDE_JIT
     Image<int> out = f.realize(32, 32);
+#endif
 
+#if !HALIDE_STATIC_COMPILE
     for (int y = 0; y < 32; y++) {
         for (int x = 0; x < 32; x++) {
             if (out(x, y) != x*4 + y) {
@@ -33,5 +51,6 @@ int main(int argc, char **argv) {
     }
 
     printf("Success!\n");
+#endif
     return 0;
 }

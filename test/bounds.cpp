@@ -1,10 +1,18 @@
 #include <stdio.h>
-#include <Halide.h>
 #include <iostream>
 
+#if !HALIDE_STATIC_RUN
+#include <Halide.h>
 using namespace Halide;
+#else
+#include "hl_bounds_hl_f.h"
+#include "hl_bounds_hl_g.h"
+#include "hl_bounds_hl_h.h"
+#include "../apps/support/static_image.h"
+#endif
 
 int main(int argc, char **argv) {
+#if !HALIDE_STATIC_RUN
     Var x("x"), y("y");
     Func f("f"), g("g"), h("h");
 
@@ -25,13 +33,34 @@ int main(int argc, char **argv) {
         g.cuda_tile(x, y, 32, 1);
         h.cuda_tile(x, y, 32, 1);
     }
+#endif
  
+#if HALIDE_STATIC_COMPILE
+    printf("Compiling functions...\n");
+
+    f.compile_to_file("hl_bounds_hl_f");
+    g.compile_to_file("hl_bounds_hl_g");
+    h.compile_to_file("hl_bounds_hl_h");
+#endif
+
+#if HALIDE_JIT
     printf("Realizing function...\n");
 
     Image<int> imf = f.realize(32, 32);
     Image<int> img = g.realize(32, 32);
     Image<int> imh = h.realize(32, 32);
+#endif
 
+#if HALIDE_STATIC_RUN
+    Image<int> imf(32, 32);
+    hl_bounds_hl_f(imf);
+    Image<int> img(32, 32);
+    hl_bounds_hl_g(img);
+    Image<int> imh(32, 32);
+    hl_bounds_hl_h(imh);
+#endif
+
+#if !HALIDE_STATIC_COMPILE
     // Check the result was what we expected
     for (int i = 0; i < 32; i++) {
         for (int j = 0; j < 32; j++) {
@@ -54,5 +83,7 @@ int main(int argc, char **argv) {
     }
 
     printf("Success!\n");
+#endif
+
     return 0;
 }
