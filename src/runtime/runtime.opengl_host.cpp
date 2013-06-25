@@ -1,8 +1,9 @@
-/*
- * Build standalone test (on Mac) with:
- *
- *   clang -framework OpenCL -DTEST_STUB runtime.opencl_host.cpp
- */
+/* build test
+
+g++ -c -o runtime.opengl_host.o runtime.opengl_host.cpp -I/usr/include
+gcc -o test-gl runtime.opengl_host.o -L/usr/lib -lGL -lglut -lGLEW -lm
+
+*/
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,6 +11,9 @@
 #include "../buffer_t.h"
 
 // The PTX host extends the x86 target
+// But compilation fails with these, and I don't know what they do,
+// so let's ignore for now
+#if 0
 #include "posix_allocator.cpp"
 #include "posix_clock.cpp"
 #include "posix_error_handler.cpp"
@@ -25,14 +29,140 @@
 #include "posix_thread_pool.cpp"
 #endif
 #endif
-
-#ifdef __APPLE__
-#include <OpenCL/cl.h>
-#else
-#include <CL/cl.h>
 #endif
 
+#include <GL/glew.h>
+
 #define WEAK __attribute__((weak))
+
+extern "C" {
+
+// Used to create buffer_ts to track internal allocations caused by our runtime
+// For now exactly the same as the openCL version
+// TODO: add checks specific to the sorts of images that OpenGL can handle
+buffer_t* WEAK __make_buffer(uint8_t* host, size_t elem_size,
+                        size_t dim0, size_t dim1,
+                        size_t dim2, size_t dim3)
+{
+    buffer_t* buf = (buffer_t*)malloc(sizeof(buffer_t));
+    buf->host = host;
+    buf->dev = 0;
+    buf->extent[0] = dim0;
+    buf->extent[1] = dim1;
+    buf->extent[2] = dim2;
+    buf->extent[3] = dim3;
+    buf->elem_size = elem_size;
+    buf->host_dirty = false;
+    buf->dev_dirty = false;
+    return buf;
+}
+
+// Used to generate correct timings when tracing
+// If all went well with OpenGl, this won't die
+WEAK void halide_dev_sync() {  
+    // glFinish does not return until the effects of all previously called GL commands are complete.
+    // Such effects include all changes to GL state, all changes to connection state, and all changes
+    // to the frame buffer contents.
+    glFinish();
+}
+
+// fragment shader is the kernel here - we'll need a different one for each operation
+
+// vertex shader seems like it should always be the same
+
+/*
+int f( buffer_t *input, buffer_t *result, int N )
+{
+    const char* entry_name = "knl";
+
+    int threadsX = 128;
+    int threadsY =  1;
+    int threadsZ =  1;
+    int blocksX = N / threadsX;
+    int blocksY = 1;
+    int blocksZ = 1;
+
+
+    threadsX = 8;
+    threadsY =  1;
+    threadsZ =  1;
+    blocksX = 4;
+    blocksY = 4;
+    blocksZ = 1;
+
+    // Invoke
+    size_t argSizes[] = { sizeof(cl_mem), sizeof(cl_mem), sizeof(int), 0 };
+    void* args[] = { &input->dev, &result->dev, &N, 0 };
+    halide_dev_run(
+        entry_name,
+        blocksX,  blocksY,  blocksZ,
+        threadsX, threadsY, threadsZ,
+        1, // sharedMemBytes
+        argSizes,
+        args
+    );
+
+    return 0;
+}
+*/
+
+// this should probably also be the same as the openCL version
+int main(int argc, char* argv[]) {
+
+    printf("hello world!\n");
+    /*
+    halide_init_kernels(src);
+
+    const int N = 2048;
+    buffer_t in, out;
+
+    in.dev = 0;
+    in.host = (uint8_t*)malloc(N*sizeof(float));
+    in.elem_size = sizeof(float);
+    in.extent[0] = N; in.extent[1] = 1; in.extent[2] = 1; in.extent[3] = 1;
+
+    out.dev = 0;
+    out.host = (uint8_t*)malloc(N*sizeof(float));
+    out.elem_size = sizeof(float);
+    out.extent[0] = N; out.extent[1] = 1; out.extent[2] = 1; out.extent[3] = 1;
+
+    for (int i = 0; i < N; i++) {
+        ((float*)in.host)[i] = i / 2.0;
+    }
+    in.host_dirty = true;
+
+    halide_dev_malloc(&in);
+    halide_dev_malloc(&out);
+    halide_copy_to_dev(&in);
+
+    f( &in, &out, N );
+
+    out.dev_dirty = true;
+    halide_copy_to_host(&out);
+
+    for (int i = 0; i < N; i++) {
+        float a = ((float*)in.host)[i];
+        float b = ((float*)out.host)[i];
+        if (b != a*a) {
+            printf("[%d] %f != %f^2\n", i, b, a);
+        }
+    }
+    */
+}
+
+} // extern C linkage
+
+
+// OLD OPEN CL STUFF
+
+#if 0
+
+/*
+ * Build standalone test (on Mac) with:
+ *
+ *   clang -framework OpenCL -DTEST_STUB runtime.opencl_host.cpp
+ */
+
 
 extern "C" {
 
@@ -485,3 +615,5 @@ int main(int argc, char* argv[]) {
 #endif
 
 } // extern "C" linkage
+
+#endif
