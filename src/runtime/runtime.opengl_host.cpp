@@ -112,6 +112,7 @@ WEAK buffer_t* __malloc_buffer(int32_t size)
     return __make_buffer((uint8_t*)malloc(size), sizeof(uint8_t), size, 1, 1, 1);
 }
 
+    /*
 WEAK bool halide_validate_dev_pointer(buffer_t* buf, size_t size=0) {
 
     size_t real_size;
@@ -124,8 +125,14 @@ WEAK bool halide_validate_dev_pointer(buffer_t* buf, size_t size=0) {
     if (size) assert(real_size >= size && "Validating pointer with insufficient size");
     return true;
 }
+    */
+
 
 WEAK void halide_dev_free(buffer_t* buf) {
+
+    /*
+      buffer on device is framebuffer and texture
+     */
 
     #ifndef NDEBUG
     fprintf(stderr, "In dev_free of %p - dev: 0x%p\n", buf, (void*)buf->dev);
@@ -137,6 +144,10 @@ WEAK void halide_dev_free(buffer_t* buf) {
 }
 
 WEAK void halide_init_kernels(const char* src) {
+    /*
+      do openGL initialization stuff here
+      also initialize shaders, which will be our equivalent of kernels
+     */
     int err;
     cl_device_id dev;
     // Initialize one shared context for all Halide compiled instances
@@ -197,10 +208,18 @@ WEAK void halide_init_kernels(const char* src) {
 
 // Used to generate correct timings when tracing
 WEAK void halide_dev_sync() {
-    clFinish(cl_q);
+    // Blocks until all previously queued OpenCL commands in command_queue are issued to the associated device and have completed.
+    // clFinish(cl_q);
+    
+    // glFinish does not return until the effects of all previously called GL commands are complete.
+    // Such effects include all changes to GL state, all changes to connection state, and all changes
+    // to the frame buffer contents.
+    glFinish();
 }
 
 WEAK void halide_release() {
+    // cleanup
+
     // TODO: this is for timing; bad for release-mode performance
     #ifndef NDEBUG
     fprintf( stderr, "dev_sync on exit" );
@@ -252,6 +271,7 @@ static cl_mem __dev_malloc(size_t bytes) {
     return p;
 }
 
+// for now should be same as from openCL
 static inline size_t buf_size(buffer_t* buf) {
     size_t sz = buf->elem_size;
     if (buf->extent[0]) sz *= buf->extent[0];
@@ -263,6 +283,9 @@ static inline size_t buf_size(buffer_t* buf) {
 }
 
 WEAK void halide_dev_malloc(buffer_t* buf) {
+
+    // set up framebuffer on device
+
     #ifndef NDEBUG
     fprintf(stderr, "dev_malloc of %dx%dx%dx%d (%d bytes) (buf->dev = %p) buffer\n",
             buf->extent[0], buf->extent[1], buf->extent[2], buf->extent[3], buf->elem_size, (void*)buf->dev);
@@ -296,6 +319,9 @@ WEAK void halide_copy_to_dev(buffer_t* buf) {
 }
 
 WEAK void halide_copy_to_host(buffer_t* buf) {
+
+    // texImage2D
+
     if (buf->dev_dirty) {
         clFinish(cl_q); // block on completion before read back
         assert(buf->host && buf->dev);
@@ -416,6 +442,7 @@ int f( buffer_t *input, buffer_t *result, int N )
     return 0;
 }
 
+// this should probably also be the same as the openCL version
 int main(int argc, char* argv[]) {
     halide_init_kernels(src);
 
