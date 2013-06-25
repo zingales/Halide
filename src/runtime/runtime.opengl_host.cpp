@@ -57,6 +57,11 @@ buffer_t* WEAK __make_buffer(uint8_t* host, size_t elem_size,
     return buf;
 }
 
+// functions expected by CodeGen_GPU_Host
+
+WEAK void halide_dev_free(buffer_t* buf) {}
+WEAK void halide_dev_malloc(buffer_t* buf) {}
+
 // Used to generate correct timings when tracing
 // If all went well with OpenGl, this won't die
 WEAK void halide_dev_sync() {  
@@ -65,6 +70,10 @@ WEAK void halide_dev_sync() {
     // to the frame buffer contents.
     glFinish();
 }
+
+WEAK void halide_copy_to_dev(buffer_t* buf) {}
+WEAK void halide_copy_to_host(buffer_t* buf) {}
+WEAK void halide_dev_run() {}
 
 // fragment shader is the kernel here - we'll need a different one for each operation
 
