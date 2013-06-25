@@ -29,7 +29,7 @@ PTX_CXX_FLAGS=$(if $(WITH_PTX), "-DWITH_PTX=1", )
 PTX_ARCHS=$(if $(WITH_PTX), ptx_host ptx_dev, )
 PTX_LLVM_CONFIG_LIB=$(if $(WITH_PTX), nvptx, )
 
-CXX_FLAGS = -Wall -Werror -fno-rtti -Woverloaded-virtual -Wno-unused-function -fPIC -O3 
+CXX_FLAGS = -Wall -Werror -fno-rtti -Woverloaded-virtual -Wno-unused-function -fPIC -O3 -fno-strict-aliasing
 CXX_FLAGS += $(LLVM_CXX_FLAGS)
 CXX_FLAGS += $(NATIVE_CLIENT_CXX_FLAGS)
 CXX_FLAGS += $(PTX_CXX_FLAGS)
@@ -40,6 +40,10 @@ UNAME = $(shell uname)
 ifeq ($(UNAME), Linux)
 TEST_CXX_FLAGS += -rdynamic
 endif
+
+# Compiling the tutorials requires libpng
+LIBPNG_LIBS ?= $(shell libpng-config --ldflags)
+LIBPNG_CXX_FLAGS ?= $(shell libpng-config --cflags)
 
 ifdef BUILD_PREFIX
 BUILD_DIR = build/$(BUILD_PREFIX)
@@ -157,7 +161,7 @@ $(BIN_DIR)/error_%: test/error/%.cpp $(BIN_DIR)/libHalide.so include/Halide.h
 	$(CXX) $(TEST_CXX_FLAGS) -O3 $< -Iinclude -L$(BIN_DIR) -lHalide -lpthread -ldl -o $@	
 
 $(BIN_DIR)/tutorial_%: tutorial/%.cpp $(BIN_DIR)/libHalide.so include/Halide.h
-	$(CXX) $(TEST_CXX_FLAGS) -O3 $< -Iinclude -L$(BIN_DIR) -lHalide -lpthread -ldl -lpng -o $@	
+	$(CXX) $(TEST_CXX_FLAGS) $(LIBPNG_CXX_FLAGS) -O3 $< -Iinclude -L$(BIN_DIR) -lHalide -lpthread -ldl $(LIBPNG_LIBS) -o $@	
 
 test_%: $(BIN_DIR)/test_%
 	@-mkdir -p tmp
