@@ -37,6 +37,466 @@ gcc -o test-gl runtime.opengl_host.o -L/usr/lib -lGL -lglut -lGLEW -lm
 
 extern "C" {
 
+// -------------------------- BEGIN OPENGL CODE ---------------------------------//
+
+#include <stdlib.h>
+// GLEW, also pulls in system OpenGL headers
+#include <GL/glew.h>
+// Apple has GLUT framework headers in weird place
+#ifdef __APPLE__
+#  include <GLUT/glut.h> 
+#else
+#  include <GL/glut.h>
+#endif
+
+#include <math.h>
+#include <stdio.h>
+
+#ifndef NDEBUG
+#define CHECK_ERROR()                                                   \
+    { GLenum errCode;                                                   \
+        if((errCode = glGetError()) != GL_NO_ERROR)                     \
+            fprintf (stderr, "OpenGL Error at line %d: 0x%04x\n", __LINE__, (unsigned int) errCode); \
+    }
+#define SAY_HI() printf("hi %s()!\n",  __PRETTY_FUNCTION__)
+#else
+#define CHECK_ERROR()
+#define SAY_HI() 
+#endif
+
+//------------------------------------ non open GL helper functions ---------------------//
+
+static float *empty_image(int w, int h) {
+    SAY_HI();
+    return (float *) calloc(3*w*h, sizeof(float));
+}
+
+static float *random_image(int w, int h) {
+    SAY_HI();
+    float *img = empty_image(w, h);
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            for (int c = 0; c < 3; c++) {
+                img[y*w*3 + x*3 + c] = (float) y*w*3 + x*3 + c + 1.5; // = rand();
+            }
+        }
+    }
+    return img;
+}
+
+static int compare_images(float *ref, float* copy, int w, int h) {
+    SAY_HI();
+    for (int x = 0; x < w; x++) {
+        for (int y = 0; y < h; y++) {
+            for (int c = 0; c < 3; c++) {
+                int idx = y*w*3 + x*3 + c;
+                float ref_c = ref[idx];
+                float copy_c = copy[idx];
+                if (ref_c!=copy_c) {
+                    printf("mismatch at (%d, %d, %d): expected %f but found %f\n",
+                           x, y, c, ref_c, copy_c);
+                    return -1;
+                }
+           }
+        }
+    }
+    return 0;
+}
+
+//------------------------------------ open GL helper functions --------------------------//
+
+/** make texture
+ *  if data is NULL texture will be empty
+ */
+static GLuint make_texture(int w,
+                           int h,
+                           void *data) {
+
+    SAY_HI();
+
+    // generate texture object name
+    GLuint texture;
+    // void glGenTextures(GLsizei  n, GLuint *  textures);
+    glGenTextures(1, &texture);
+    CHECK_ERROR();
+
+    // create texture object
+    glBindTexture(GL_TEXTURE_RECTANGLE, texture);
+    CHECK_ERROR();
+
+    // set parameters to use this texture as an image - use NN and clamp edges
+    // should use i instead of f here? or shouldn't make difference
+    glTexParameteri(GL_TEXTURE_RECTANGLE, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_RECTANGLE, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_RECTANGLE, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_RECTANGLE, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    CHECK_ERROR();
+
+    // it looks like we can bind NULL data with glTexImage2D if we intend to
+    // render into this buffer
+    // it's unclear if we can split this into two operations
+    // maybe would make sense to generate the names and count that as allocation?
+    // void TexImage2D( enum target, int level,
+    //                  int internalformat, sizei width, sizei height,
+    //                  int border, enum format, enum type, void *data );
+    // TODO: fix data format
+    glTexImage2D(GL_TEXTURE_RECTANGLE, 0, GL_RGB32F, w, h,
+                 0, GL_RGB, GL_FLOAT, data);
+    CHECK_ERROR();
+
+    return texture;
+}
+
+/** make a framebuffer and bind it to a texture
+ */
+static GLuint make_framebuffer(GLuint texture) {
+
+    SAY_HI();
+
+    // generate buffer object name
+    GLuint framebuffer;
+
+    // void glGenBuffers(GLsizei  n, GLuint *  buffers);
+    glGenFramebuffers(1, &framebuffer);
+    CHECK_ERROR();
+
+    // framebuffer is created by binding an unused name to target framebuffer
+    // void BindFramebuffer( enum target, uint framebuffer );
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+    CHECK_ERROR();
+
+    // http://stackoverflow.com/questions/4264775/opengl-trouble-with-render-to-texture-framebuffer-object
+    // suggests that we should do this because we don't need the depth buffer
+    // so long, depth buffer, and thanks for all the fish
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_DEPTH_TEST);
+    CHECK_ERROR();
+
+    // specify texture as color attachment to framebuffer
+    glBindTexture(GL_TEXTURE_RECTANGLE, texture);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                           GL_TEXTURE_RECTANGLE, texture, 0);
+    CHECK_ERROR();
+
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER)==GL_FRAMEBUFFER_COMPLETE) {
+        printf("framebuffer =)\n");
+    } else {
+        printf("framebuffer =(\n");
+    }
+
+    //unbind?
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    return framebuffer;
+}
+
+/* 
+ * Handles shader errors
+ */
+static void show_info_log(GLuint object,
+			  PFNGLGETSHADERIVPROC glGet__iv,
+                          PFNGLGETSHADERINFOLOGPROC glGet__InfoLog) {
+    GLint log_length;
+    char *log;
+    
+    glGet__iv(object, GL_INFO_LOG_LENGTH, &log_length);
+    log = (char*) malloc(log_length);
+    glGet__InfoLog(object, log_length, NULL, log);
+    fprintf(stderr, "%s", log);
+    free(log);
+}
+
+/*
+ * Make shader from string
+ */
+static GLuint make_shader(GLenum type, const char *source, GLint *length)
+{
+    GLuint shader;
+    GLint shader_ok;
+    
+    if (!source)
+        return 0;
+    
+    // GLSL builds the shader from source every time. Here we read our 
+    // shader source out of a separate file, which lets us change the
+    // shader source without recompiling our C.
+    shader = glCreateShader(type);
+    glShaderSource(shader, 1, (const GLchar**)&source, length);
+    glCompileShader(shader);
+    
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &shader_ok);
+    if (!shader_ok) {
+        fprintf(stderr, "Failed to compile shader\n");
+        show_info_log(shader, glGetShaderiv, glGetShaderInfoLog);
+        glDeleteShader(shader);
+        return 0;
+    } else {
+        show_info_log(shader, glGetShaderiv, glGetShaderInfoLog);
+    }
+    return shader;
+}
+
+/*
+ * make buffer for storing vertex arrays
+ */
+static GLuint make_buffer(GLenum target,
+			  const void *buffer_data,
+			  GLsizei buffer_size) {
+    GLuint buffer;
+    glGenBuffers(1, &buffer);
+    glBindBuffer(target, buffer);
+    glBufferData(target, buffer_size, buffer_data, GL_STATIC_DRAW);
+    return buffer;
+}
+
+/*
+ * make a program from a vertex and fragment shader
+ */
+static GLuint make_program(GLuint vertex_shader, GLuint fragment_shader)
+{
+    GLint program_ok;
+    
+    GLuint program = glCreateProgram();
+    glAttachShader(program, vertex_shader);
+    glAttachShader(program, fragment_shader);
+    glLinkProgram(program);
+    
+    glGetProgramiv(program, GL_LINK_STATUS, &program_ok);
+    if (!program_ok) {
+        fprintf(stderr, "Failed to link shader program:\n");
+        show_info_log(program, glGetProgramiv, glGetProgramInfoLog);
+        glDeleteProgram(program);
+        return 0;
+    }
+    return program;
+}
+
+static const GLfloat g_vertex_buffer_data[] = { 
+    -1.0f, -1.0f,
+    1.0f, -1.0f,
+    -1.0f, 1.0f,
+    1.0f, 1.0f
+};
+
+static const GLushort g_element_buffer_data[] = { 0, 1, 2, 3 };
+
+const char* vertex_shader_src = \
+"#version 410                                    \n"\
+"in vec2 position;                               \n"\
+"out vec2 texcoord;                              \n"\
+"void main()                                     \n"\
+"{                                               \n"\
+"    gl_Position = vec4(position, 0.0, 1.0);     \n"\
+"    texcoord = position*vec2(0.5) + vec2(0.5);  \n"\
+"}                                               \n\0";
+
+const char* fragment_shader_src = \
+"#version 410                                    \n"\
+"uniform float fade_factor;                      \n"\
+"uniform sampler2DRect input;                    \n"\
+"uniform ivec2 input_dim;                        \n"\
+"in vec2 texcoord;                               \n"\
+"out vec4 output;                                \n"\
+"void main()                                     \n"\
+"{                                               \n"\
+"    vec2 input_coord = input_dim*texcoord;      \n"\
+"    output = fade_factor*texture(input, input_coord); \n"\
+"}                                               \n\0";
+
+int main_old(int argc, char** argv)
+{
+    SAY_HI();
+    
+    // prep GLUT - will initialize the GLUT library and negotiate 
+    // a session with the window system
+    glutInit(&argc, argv);
+    // specify what buffers default framebuffer should have
+    // this specifies a colour buffer with double buffering
+    //glutInitDisplayMode(GLUT_RGB | GLUT_DOUBLE);
+    // set window size to 400x300
+    GLint w = 4;
+    GLint h = 10;
+    //glutInitWindowSize(w, h);
+    // create window (arg is char* name)
+    // this is necessary for initializing openGL
+    glutCreateWindow("Hello World");
+    // set display callback for current window
+    // takes function pointer to void function w/ no args
+    // void glutDisplayFunc(void (*func)(void))
+    //glutDisplayFunc(&render);
+    // idle callback is continuously called when events are not being received
+    // this will update the fade factor between the two images over time
+    //glutIdleFunc(&update_fade_factor);
+    
+    // sets a bunch of flags based on what extensions and OpenGL versions
+    // are available
+    glewInit();
+    // check flag for new enough version of OpenGL
+    if (!GLEW_VERSION_4_0) {
+        fprintf(stderr, "OpenGL 4.0 not available\n");
+        return 1;
+    }
+
+    /*
+     * Data used to seed our vertex array and element array buffers.
+     * glBufferData just sees this as a stream of bytes.
+     * Specify vertices and ordering to make triangles out of them.
+     */
+
+    
+    float *data = random_image(w, h);
+
+    // generate texture object name
+    GLuint input_texture = make_texture(w, h, (void *) data);
+    CHECK_ERROR();
+    
+    // generate buffer object name
+    GLuint input_framebuffer = make_framebuffer(input_texture);
+    CHECK_ERROR();
+
+    // generate texture object name
+    GLuint output_texture = make_texture(w, h, NULL);
+    CHECK_ERROR();
+    
+    // generate buffer object name
+    GLuint output_framebuffer = make_framebuffer(output_texture);
+    CHECK_ERROR();
+
+    // somehow we know what the current framebufffer is
+    glBindFramebuffer(GL_FRAMEBUFFER, output_framebuffer);
+    glBindTexture(GL_TEXTURE_RECTANGLE, output_texture);
+    const GLenum bufs[] = {GL_COLOR_ATTACHMENT0};
+    CHECK_ERROR();
+
+    
+    // Specifies a list of color buffers to be drawn into.
+    // void glDrawBuffers(GLsizei  n, // number of buffers in bufs
+    //                    const GLenum * bufs);
+    // The fragment shader output value is written into the nth color attachment
+    // of the current framebuffer. n may range from 0 to the value of GL_MAX_COLOR_ATTACHMENTS.
+    glDrawBuffers(1, bufs);
+    CHECK_ERROR();
+    
+    // render into entire framebuffer
+    glViewport(0, 0, w, h);
+    
+    // render
+
+    // make buffers
+    GLuint vertex_buffer = make_buffer(GL_ARRAY_BUFFER,
+                                       g_vertex_buffer_data,
+                                       sizeof(g_vertex_buffer_data));
+    GLuint element_buffer = make_buffer(GL_ELEMENT_ARRAY_BUFFER,
+                                        g_element_buffer_data,
+                                        sizeof(g_element_buffer_data));;
+    CHECK_ERROR();
+    // make shaders
+    GLint length;
+    GLchar *shader_src = (GLchar *) vertex_shader_src;
+    GLuint vertex_shader = make_shader(GL_VERTEX_SHADER, shader_src, NULL);
+    if (vertex_shader == 0) { return 0; }
+    CHECK_ERROR();
+    printf("here!\n");
+    shader_src = (GLchar *) fragment_shader_src;
+    GLuint fragment_shader = make_shader(GL_FRAGMENT_SHADER, shader_src, NULL);
+    if (fragment_shader == 0) { return 0; }
+    CHECK_ERROR();
+
+    // make program
+    GLuint program = make_program(vertex_shader, fragment_shader);
+    GLint fade_factor = glGetUniformLocation(program, "fade_factor");
+    GLint input = glGetUniformLocation(program, "input");
+    GLint input_dim = glGetUniformLocation(program, "input_dim");
+    GLint position = glGetAttribLocation(program, "position");
+    //input_dim[1] = glGetAttribLocation(program, "input_dim[1]");
+    CHECK_ERROR();
+
+    // render
+    glUseProgram(program);
+    // location, value
+    glUniform1f(fade_factor, 1.0);
+    CHECK_ERROR();
+    glUniform2i(input_dim, (GLint) w, (GLint) h);
+    CHECK_ERROR();
+    glActiveTexture(GL_TEXTURE0);
+    CHECK_ERROR();
+    glBindTexture(GL_TEXTURE_RECTANGLE, input_texture);
+    CHECK_ERROR();
+    glUniform1i(input, 0);
+    CHECK_ERROR();
+
+    glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer);
+    glVertexAttribPointer(position,  /* attribute */
+                          2,                                /* size */
+                          GL_FLOAT,                         /* type */
+                          GL_FALSE,                         /* normalized? */
+                          sizeof(GLfloat)*2,                /* stride */
+                          (void*)0                          /* array buffer offset */
+                          );
+    glEnableVertexAttribArray(position);
+    CHECK_ERROR();    
+
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, element_buffer);
+    glDrawElements(GL_TRIANGLE_STRIP,  /* mode */
+                   4,                  /* count */
+                   GL_UNSIGNED_SHORT,  /* type */
+                   (void*)0            /* element array buffer offset */
+                   );
+    
+    glDisableVertexAttribArray(position);
+    
+    glFinish();
+    
+    // copy back texture
+    float *img = empty_image(w, h);
+    // void glGetTexImage(GLenum  target,
+    //		   GLint  level,
+    //		   GLenum  format,
+    //		   GLenum  type,
+    //		   GLvoid *  img);
+    CHECK_ERROR();
+    glBindTexture(GL_TEXTURE_RECTANGLE, output_texture);
+    glGetTexImage(GL_TEXTURE_RECTANGLE, 0, GL_RGB, GL_FLOAT, (void *) img);
+    glFlush();
+    glFinish();
+    CHECK_ERROR();
+
+    compare_images(data, img, w, h);
+    
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            for (int c = 0; c < 3; c++) {
+                printf("%03f ", ((float *) data)[y*w*3 + x*3 + c]);
+            }
+        }
+        printf("\n");
+    }
+    printf("---------------------\n");
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            for (int c = 0; c < 3; c++) {
+                printf("%03f ", ((float *) img)[y*w*3 + x*3 + c]);
+            }
+        }
+        printf("\n");
+    }
+	  
+    printf("success!\n");
+    free(img);
+    
+    // clean up
+    glDeleteFramebuffers(1, &input_framebuffer);
+    glDeleteFramebuffers(1, &output_framebuffer);
+    glDeleteTextures(1, &input_texture);
+    glDeleteTextures(1, &output_texture);
+
+    // suppresses compiler warnings
+    return 0;
+}
+
+
+// -------------------------- END OPENGL CODE ---------------------------------//
+
 // Used to create buffer_ts to track internal allocations caused by our runtime
 // For now exactly the same as the openCL version
 // TODO: add checks specific to the sorts of images that OpenGL can handle
@@ -59,8 +519,12 @@ buffer_t* WEAK __make_buffer(uint8_t* host, size_t elem_size,
 
 // functions expected by CodeGen_GPU_Host
 
-WEAK void halide_dev_free(buffer_t* buf) {}
-WEAK void halide_dev_malloc(buffer_t* buf) {}
+WEAK void halide_dev_free(buffer_t* buf) {
+    // should delete framebuffer and texture associated with it
+}
+WEAK void halide_dev_malloc(buffer_t* buf) {
+    // should create framebuffer and bind it to a texture
+}
 
 // Used to generate correct timings when tracing
 // If all went well with OpenGl, this won't die
@@ -71,10 +535,21 @@ WEAK void halide_dev_sync() {
     glFinish();
 }
 
-WEAK void halide_copy_to_dev(buffer_t* buf) {}
-WEAK void halide_copy_to_host(buffer_t* buf) {}
-WEAK void halide_dev_run() {}
-
+WEAK void halide_copy_to_dev(buffer_t* buf) {
+    // should copy pixels from cpu memory to texture
+}
+WEAK void halide_copy_to_host(buffer_t* buf) {
+    // should copy pixels from texture to cpu memory
+}
+WEAK void halide_dev_run(
+    const char* entry_name,
+    int blocksX, int blocksY, int blocksZ,
+    int threadsX, int threadsY, int threadsZ,
+    int shared_mem_bytes,
+    size_t arg_sizes[],
+    void* args[])
+{
+}
 // fragment shader is the kernel here - we'll need a different one for each operation
 
 // vertex shader seems like it should always be the same
@@ -119,6 +594,8 @@ int f( buffer_t *input, buffer_t *result, int N )
 int main(int argc, char* argv[]) {
 
     printf("hello world!\n");
+
+    main_old(0, NULL);
     /*
     halide_init_kernels(src);
 
