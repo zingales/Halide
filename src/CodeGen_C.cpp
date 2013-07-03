@@ -37,6 +37,7 @@ const string buffer_t_definition =
 const string preamble =
     "#include <iostream>\n"
     "#include <math.h>\n"
+    "#include <float.h>\n"
     "#include <assert.h>\n"
     "#include <string.h>\n"
     "\n"
@@ -47,25 +48,121 @@ const string preamble =
     "extern \"C\" int halide_current_time();\n"
     "extern \"C\" int halide_printf(const char *fmt, ...);\n"
     "\n"
-    "extern \"C\" inline float abs_f32(float x) {return fabsf(x);}\n"
-    "extern \"C\" inline float ceil_f32(float x) {return ceilf(x);}\n"
-    "extern \"C\" inline float floor_f32(float x) {return floorf(x);}\n"
-    "extern \"C\" inline float inf_f32() {return INFINITY;}\n"
-    "extern \"C\" inline float nan_f32() {return NAN;}\n"
-    "extern \"C\" inline float neg_inf_f32() {return -INFINITY;}\n"
-    "extern \"C\" inline float pow_f32(float x, float y) {return powf(x, y);}\n"
-    "extern \"C\" inline float round_f32(float x) {return roundf(x);}\n"
-    "extern \"C\" inline float sqrt_f32(float x) {return sqrtf(x);}\n"
+
+    // TODO: this next chunk is copy-pasted from posix_math.cpp. A
+    // better solution for the C runtime would be nice.
+    "#ifdef _WIN32\n"
+    "extern \"C\" float roundf(float);\n"
+    "extern \"C\" double round(double);\n"
+    "#else\n"
+    "inline float asinh_f32(float x) {return asinhf(x);}\n"
+    "inline float acosh_f32(float x) {return acoshf(x);}\n"
+    "inline float atanh_f32(float x) {return atanhf(x);}\n"
+    "inline double asinh_f64(double x) {return asinh(x);}\n"
+    "inline double acosh_f64(double x) {return acosh(x);}\n"
+    "inline double atanh_f64(double x) {return atanh(x);}\n"
+    "#endif\n"
+    "inline float sqrt_f32(float x) {return sqrtf(x);}\n"
+    "inline float sin_f32(float x) {return sinf(x);}\n"
+    "inline float asin_f32(float x) {return asinf(x);}\n"
+    "inline float cos_f32(float x) {return cosf(x);}\n"
+    "inline float acos_f32(float x) {return acosf(x);}\n"
+    "inline float tan_f32(float x) {return tanf(x);}\n"
+    "inline float atan_f32(float x) {return atanf(x);}\n"
+    "inline float sinh_f32(float x) {return sinhf(x);}\n"
+    "inline float cosh_f32(float x) {return coshf(x);}\n"
+    "inline float tanh_f32(float x) {return tanhf(x);}\n"
+    "inline float hypot_f32(float x, float y) {return hypotf(x, y);}\n"
+    "inline float exp_f32(float x) {return expf(x);}\n"
+    "inline float log_f32(float x) {return logf(x);}\n"
+    "inline float pow_f32(float x, float y) {return powf(x, y);}\n"
+    "inline float floor_f32(float x) {return floorf(x);}\n"
+    "inline float ceil_f32(float x) {return ceilf(x);}\n"
+    "inline float round_f32(float x) {return roundf(x);}\n"
+    "\n"
+    "inline double sqrt_f64(double x) {return sqrt(x);}\n"
+    "inline double sin_f64(double x) {return sin(x);}\n"
+    "inline double asin_f64(double x) {return asin(x);}\n"
+    "inline double cos_f64(double x) {return cos(x);}\n"
+    "inline double acos_f64(double x) {return acos(x);}\n"
+    "inline double tan_f64(double x) {return tan(x);}\n"
+    "inline double atan_f64(double x) {return atan(x);}\n"
+    "inline double sinh_f64(double x) {return sinh(x);}\n"
+    "inline double cosh_f64(double x) {return cosh(x);}\n"
+    "inline double tanh_f64(double x) {return tanh(x);}\n"
+    "inline double hypot_f64(double x, double y) {return hypot(x, y);}\n"
+    "inline double exp_f64(double x) {return exp(x);}\n"
+    "inline double log_f64(double x) {return log(x);}\n"
+    "inline double pow_f64(double x, double y) {return pow(x, y);}\n"
+    "inline double floor_f64(double x) {return floor(x);}\n"
+    "inline double ceil_f64(double x) {return ceil(x);}\n"
+    "inline double round_f64(double x) {return round(x);}\n"
+    "\n"
+    "inline float maxval_f32() {return FLT_MAX;}\n"
+    "inline float minval_f32() {return -FLT_MAX;}\n"
+    "inline double maxval_f64() {return DBL_MAX;}\n"
+    "inline double minval_f64() {return -DBL_MAX;}\n"
+    "inline uint8_t maxval_u8() {return 0xff;}\n"
+    "inline uint8_t minval_u8() {return 0;}\n"
+    "inline uint16_t maxval_u16() {return 0xffff;}\n"
+    "inline uint16_t minval_u16() {return 0;}\n"
+    "inline uint32_t maxval_u32() {return 0xffffffff;}\n"
+    "inline uint32_t minval_u32() {return 0;}\n"
+    "inline uint64_t maxval_u64() {return 0xffffffffffffffff;}\n"
+    "inline uint64_t minval_u64() {return 0;}\n"
+    "inline int8_t maxval_s8() {return 0x7f;}\n"
+    "inline int8_t minval_s8() {return 0x80;}\n"
+    "inline int16_t maxval_s16() {return 0x7fff;}\n"
+    "inline int16_t minval_s16() {return 0x8000;}\n"
+    "inline int32_t maxval_s32() {return 0x7fffffff;}\n"
+    "inline int32_t minval_s32() {return 0x80000000;}\n"
+    "inline int64_t maxval_s64() {return 0x7fffffffffffffff;}\n"
+    "inline int64_t minval_s64() {return 0x8000000000000000;}\n"
+    "\n"
+    "inline int8_t abs_i8(int8_t a) {return a >= 0 ? a : -a;}\n"
+    "inline int16_t abs_i16(int16_t a) {return a >= 0 ? a : -a;}\n"
+    "inline int32_t abs_i32(int32_t a) {return a >= 0 ? a : -a;}\n"
+    "inline int64_t abs_i64(int64_t a) {return a >= 0 ? a : -a;}\n"
+    "inline float abs_f32(float a) {return fabsf(a);}\n"
+    "inline double abs_f64(double a) {return fabs(a);}\n"
+    "\n"
+    "inline float nan_f32() {return NAN;}\n"
+    "inline float neg_inf_f32() {return -INFINITY;}\n"
+    "inline float inf_f32() {return INFINITY;}\n"
     "\n"
     "template<typename T> T max(T a, T b) {if (a > b) return a; return b;}\n"
     "template<typename T> T min(T a, T b) {if (a < b) return a; return b;}\n"
     "template<typename T> T mod(T a, T b) {T result = a % b; if (result < 0) result += b; return result;}\n"
     "template<typename T> T sdiv(T a, T b) {return (a - mod(a, b))/b;}\n"
-    // Neither reinterpret_cast nor address-casting are appropriate here.
-    // memcpy() is reliable and more than fast enough for our purposes.
+
+    // This may look wasteful, but it's the right way to do
+    // it. Compilers understand memcpy and will convert it to a no-op
+    // when used in this way. See http://blog.regehr.org/archives/959
+    // for a detailed comparison of type-punning methods.
     "template<typename A, typename B> A reinterpret(B b) {A a; memcpy(&a, &b, sizeof(a)); return a;}\n"
-    "\n" +
-    buffer_t_definition;
+    "\n"
+
+    "bool halide_maybe_rewrite_buffer(bool go, buffer_t *b, int32_t elem_size,\n"
+    "                                 int32_t min0, int32_t extent0, int32_t stride0,\n"
+    "                                 int32_t min1, int32_t extent1, int32_t stride1,\n"
+    "                                 int32_t min2, int32_t extent2, int32_t stride2,\n"
+    "                                 int32_t min3, int32_t extent3, int32_t stride3) {\n"
+    " if (!go) return true;\n"
+    " b->min[0] = min0;\n"
+    " b->min[1] = min1;\n"
+    " b->min[2] = min2;\n"
+    " b->min[3] = min3;\n"
+    " b->extent[0] = extent0;\n"
+    " b->extent[1] = extent1;\n"
+    " b->extent[2] = extent2;\n"
+    " b->extent[3] = extent3;\n"
+    " b->stride[0] = stride0;\n"
+    " b->stride[1] = stride1;\n"
+    " b->stride[2] = stride2;\n"
+    " b->stride[3] = stride3;\n"
+    " return true;\n"
+    "}\n"
+    + buffer_t_definition;
 }
 
 CodeGen_C::CodeGen_C(ostream &s) : IRPrinter(s), id("$$ BAD ID $$") {}
@@ -167,6 +264,13 @@ void CodeGen_C::compile(Stmt s, string name, const vector<Argument> &args) {
                    << name
                    << "->host);\n";
             allocations.push(args[i].name, args[i].type);
+
+            stream << "const bool "
+                   << name
+                   << "_host_and_dev_are_null = (_"
+                   << name << "->host == NULL) && (_"
+                   << name << "->dev == 0);\n";
+            stream << "(void)" << name << "_host_and_dev_are_null;\n";
 
             for (int j = 0; j < 4; j++) {
                 stream << "const int32_t "
@@ -403,6 +507,28 @@ void CodeGen_C::visit(const Call *op) {
         } else if (op->name == Call::shift_right) {
             assert(op->args.size() == 2);
             rhs << print_expr(op->args[0]) << " >> " << print_expr(op->args[1]);
+        } else if (op->name == Call::maybe_rewrite_buffer) {
+            assert(op->args.size() == 15);
+            vector<string> args(op->args.size());
+            for (size_t i = 0; i < op->args.size(); i++) {
+                if (i == 1) {
+                    args[i] = "_" + op->args[i].as<Call>()->name;
+                } else {
+                    args[i] = print_expr(op->args[i]);
+                }
+            }
+            rhs << "halide_maybe_rewrite_buffer(";
+            for (size_t i = 0; i < op->args.size(); i++) {
+                if (i > 0) rhs << ", ";
+                rhs << args[i];
+            }
+            rhs << ")";
+        } else if (op->name == Call::maybe_return) {
+            assert(op->args.size() == 1);
+            string cond = print_expr(op->args[0]);
+            do_indent();
+            stream << "if (" << cond << ") return;\n";
+            rhs << "true";
         } else {
           // TODO: other intrinsics
           std::cerr << "Unhandled intrinsic: " << op->name << std::endl;
@@ -662,6 +788,8 @@ void CodeGen_C::test() {
     string correct_source = preamble +
         "extern \"C\" void test1(const buffer_t *_buf, const float alpha, const int32_t beta) {\n"
         "int32_t *buf = (int32_t *)(_buf->host);\n"
+        "const bool buf_host_and_dev_are_null = (_buf->host == NULL) && (_buf->dev == 0);\n"
+        "(void)buf_host_and_dev_are_null;\n"
         "const int32_t buf_min_0 = _buf->min[0];\n"
         "(void)buf_min_0;\n"
         "const int32_t buf_min_1 = _buf->min[1];\n"
