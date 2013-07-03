@@ -237,9 +237,6 @@ protected:
     /** Recursive code for generating a gather using a binary tree. */
     llvm::Value *codegen_gather(llvm::Value *indices, const Load *op);
 
-    /** Special case for clamped vector load */
-    void create_load(const Load *, bool recurse);
-
     /** Generate code for an allocate node. It has no default
      * implementation - it must be handled in an architecture-specific
      * way. */
