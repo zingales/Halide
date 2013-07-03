@@ -66,20 +66,17 @@ extern "C" {
 
 //------------------------------------ non open GL helper functions ---------------------//
 
-static float *empty_image(int w, int h) {
+static float *empty_image(int dim0, int dim1, int dim2, int dim3) {
     SAY_HI();
-    return (float *) calloc(3*w*h, sizeof(float));
+    return (float *) calloc(dim0*dim1*dim2*dim3, sizeof(float));
 }
 
-static float *random_image(int w, int h) {
+static float *random_image(int dim0, int dim1, int dim2, int dim3) {
     SAY_HI();
-    float *img = empty_image(w, h);
-    for (int y = 0; y < h; y++) {
-        for (int x = 0; x < w; x++) {
-            for (int c = 0; c < 3; c++) {
-                img[y*w*3 + x*3 + c] = (float) y*w*3 + x*3 + c + 1.5; // = rand();
-            }
-        }
+    int sz = dim0*dim1*dim2*dim3;
+    float *img = (float*) malloc(sz*sizeof(float));
+    for (int i = 0; i < sz; i++) {
+        img[i] = rand();
     }
     return img;
 }
@@ -300,7 +297,8 @@ const char* fragment_shader_src = \
 "void main()                                     \n"\
 "{                                               \n"\
 "    vec2 input_coord = input_dim*texcoord;      \n"\
-"    output = fade_factor*texture(input, input_coord); \n"\
+"    vec4 tex_val = texture(input, input_coord); \n"\
+"    output = fade_factor*tex_val*tex_val;       \n"\
 "}                                               \n\0";
 
 int main_old(int argc, char** argv)
@@ -344,7 +342,7 @@ int main_old(int argc, char** argv)
      */
 
     
-    float *data = random_image(w, h);
+    float *data = random_image(w, h, 3, 1);
 
     // generate texture object name
     GLuint input_texture = make_texture(w, h, (void *) data);
@@ -411,10 +409,12 @@ int main_old(int argc, char** argv)
     //input_dim[1] = glGetAttribLocation(program, "input_dim[1]");
     CHECK_ERROR();
 
+    float fade_factor_val = 1.0;
+
     // render
     glUseProgram(program);
     // location, value
-    glUniform1f(fade_factor, 1.0);
+    glUniform1f(fade_factor, fade_factor_val);
     CHECK_ERROR();
     glUniform2i(input_dim, (GLint) w, (GLint) h);
     CHECK_ERROR();
@@ -422,6 +422,7 @@ int main_old(int argc, char** argv)
     CHECK_ERROR();
     glBindTexture(GL_TEXTURE_RECTANGLE, input_texture);
     CHECK_ERROR();
+    // i think the 0 matches texture 0
     glUniform1i(input, 0);
     CHECK_ERROR();
 
@@ -448,7 +449,7 @@ int main_old(int argc, char** argv)
     glFinish();
     
     // copy back texture
-    float *img = empty_image(w, h);
+    float *img = empty_image(w, h, 3, 1);
     // void glGetTexImage(GLenum  target,
     //		   GLint  level,
     //		   GLenum  format,
@@ -460,27 +461,22 @@ int main_old(int argc, char** argv)
     glFlush();
     glFinish();
     CHECK_ERROR();
-
-    compare_images(data, img, w, h);
     
     for (int y = 0; y < h; y++) {
         for (int x = 0; x < w; x++) {
             for (int c = 0; c < 3; c++) {
-                printf("%03f ", ((float *) data)[y*w*3 + x*3 + c]);
+                int idx = y*w*3 + x*3 + c;
+                float tex_val = ((float *) data)[idx];
+                float ref = fade_factor_val*tex_val*tex_val;
+                float result = ((float *) img)[idx];
+                if (ref != result) {
+                    printf("mismatch at (%d, %d, %d), ref: %f  result: %f\n",
+                           x, y, c, ref, result);
+                }
             }
         }
-        printf("\n");
     }
-    printf("---------------------\n");
-    for (int y = 0; y < h; y++) {
-        for (int x = 0; x < w; x++) {
-            for (int c = 0; c < 3; c++) {
-                printf("%03f ", ((float *) img)[y*w*3 + x*3 + c]);
-            }
-        }
-        printf("\n");
-    }
-	  
+
     printf("success!\n");
     free(img);
     
