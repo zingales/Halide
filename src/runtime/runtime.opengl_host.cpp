@@ -8,6 +8,7 @@ gcc -o test-gl runtime.opengl_host.o -L/usr/lib -lGL -lglut -lGLEW -lm
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <map>
 #include "../buffer_t.h"
 
 // The PTX host extends the x86 target
@@ -35,7 +36,7 @@ gcc -o test-gl runtime.opengl_host.o -L/usr/lib -lGL -lglut -lGLEW -lm
 
 #define WEAK __attribute__((weak))
 
-extern "C" {
+//extern "C" {
 
 // -------------------------- BEGIN OPENGL CODE ---------------------------------//
 
@@ -63,6 +64,14 @@ extern "C" {
 #define CHECK_ERROR()
 #define SAY_HI() 
 #endif
+
+// ----------------------------------- global state -------------------------------------//
+
+// map from kernel name to OpenGL program object reference
+std::map<char*, GLuint> __gl_programs;
+
+// have we initialized everything yet?
+bool __initialized;
 
 //------------------------------------ non open GL helper functions ---------------------//
 
@@ -171,6 +180,7 @@ static GLuint make_framebuffer(GLuint texture) {
 
     // specify texture as color attachment to framebuffer
     glBindTexture(GL_TEXTURE_RECTANGLE, texture);
+    // this is what binds our output buffer
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
                            GL_TEXTURE_RECTANGLE, texture, 0);
     CHECK_ERROR();
@@ -289,9 +299,10 @@ const char* vertex_shader_src = \
 
 const char* fragment_shader_src = \
 "#version 410                                    \n"\
-"uniform float fade_factor;                      \n"\
 "uniform sampler2DRect input;                    \n"\
 "uniform ivec2 input_dim;                        \n"\
+"uniform float fade_factor;                      \n"\
+"uniform float useless;                      \n"\
 "in vec2 texcoord;                               \n"\
 "out vec4 output;                                \n"\
 "void main()                                     \n"\
@@ -312,8 +323,8 @@ int main_old(int argc, char** argv)
     // this specifies a colour buffer with double buffering
     //glutInitDisplayMode(GLUT_RGB | GLUT_DOUBLE);
     // set window size to 400x300
-    GLint w = 4;
-    GLint h = 10;
+    GLint w = 768;
+    GLint h = 1024;
     //glutInitWindowSize(w, h);
     // create window (arg is char* name)
     // this is necessary for initializing openGL
@@ -349,7 +360,7 @@ int main_old(int argc, char** argv)
     CHECK_ERROR();
     
     // generate buffer object name
-    GLuint input_framebuffer = make_framebuffer(input_texture);
+    // GLuint input_framebuffer = make_framebuffer(input_texture);
     CHECK_ERROR();
 
     // generate texture object name
@@ -389,7 +400,6 @@ int main_old(int argc, char** argv)
                                         sizeof(g_element_buffer_data));;
     CHECK_ERROR();
     // make shaders
-    GLint length;
     GLchar *shader_src = (GLchar *) vertex_shader_src;
     GLuint vertex_shader = make_shader(GL_VERTEX_SHADER, shader_src, NULL);
     if (vertex_shader == 0) { return 0; }
@@ -402,11 +412,24 @@ int main_old(int argc, char** argv)
 
     // make program
     GLuint program = make_program(vertex_shader, fragment_shader);
+
+    // let's print out stuff just for fun
+    GLint params;
+    glGetProgramiv(program, GL_ACTIVE_UNIFORMS, &params);
+    printf("number of active uniforms is %d\n", (int) params);
+    GLsizei length;
+    GLint size;
+    GLenum type;
+    GLchar name[100];
+    for (int i = 0; i < params; i++) {
+        glGetActiveUniform(program, i, 100, &length, &size, &type, name);
+        printf("%s\n", name);
+    }
     GLint fade_factor = glGetUniformLocation(program, "fade_factor");
     GLint input = glGetUniformLocation(program, "input");
     GLint input_dim = glGetUniformLocation(program, "input_dim");
+    GLint useless = glGetUniformLocation(program, "useless");
     GLint position = glGetAttribLocation(program, "position");
-    //input_dim[1] = glGetAttribLocation(program, "input_dim[1]");
     CHECK_ERROR();
 
     float fade_factor_val = 1.0;
@@ -414,10 +437,19 @@ int main_old(int argc, char** argv)
     // render
     glUseProgram(program);
     // location, value
-    glUniform1f(fade_factor, fade_factor_val);
+    // things we need to know for each argument
+    // argument name
+    // count
+    // value (can be pointer)
+    // since args is an array of void*s we could pass in an array of structs
+    // that have type and name information
+    glUniform1fv(fade_factor, 1, &fade_factor_val);
     CHECK_ERROR();
-    glUniform2i(input_dim, (GLint) w, (GLint) h);
+    GLint dims[] = {w, h};
+    glUniform2iv(input_dim, 1, dims); //(GLint) w, (GLint) h);
     CHECK_ERROR();
+    float useless_val = 100000.0;
+    glUniform1fv(useless, 1, &useless_val);
     glActiveTexture(GL_TEXTURE0);
     CHECK_ERROR();
     glBindTexture(GL_TEXTURE_RECTANGLE, input_texture);
@@ -481,7 +513,7 @@ int main_old(int argc, char** argv)
     free(img);
     
     // clean up
-    glDeleteFramebuffers(1, &input_framebuffer);
+    // glDeleteFramebuffers(1, &input_framebuffer);
     glDeleteFramebuffers(1, &output_framebuffer);
     glDeleteTextures(1, &input_texture);
     glDeleteTextures(1, &output_texture);
@@ -537,6 +569,38 @@ WEAK void halide_copy_to_dev(buffer_t* buf) {
 WEAK void halide_copy_to_host(buffer_t* buf) {
     // should copy pixels from texture to cpu memory
 }
+
+// fragment shader is the kernel here - we'll need a different one for each operation
+
+// vertex shader seems like it should always be the same
+
+#define MAX_N_GL_PROGRAMS 100
+
+GLuint __hl_gl_programs[MAX_N_GL_PROGRAMS];
+
+enum hl_gl_uniform_t {
+    hl_gl_float_t,
+    hl_gl_int_t,
+    hl_gl_uint_t
+};
+
+typedef void (*hl_gl_set_uniform_uint_fn)(GLint, GLsizei, const GLuint*);
+typedef void (*hl_gl_set_uniform_float_fn)(GLint, GLsizei, const GLfloat*);
+typedef void (*hl_gl_set_uniform_int_fn)(GLint, GLsizei, const GLint*);
+    
+typedef struct {
+    char* name;
+    hl_gl_uniform_t t;
+    int count;
+    const void* val;
+} hl_gl_shader_arg;
+
+
+
+// these two arrays are going to be used by every program
+static GLuint vertex_buffer;
+static GLuint element_buffer;
+
 WEAK void halide_dev_run(
     const char* entry_name,
     int blocksX, int blocksY, int blocksZ,
@@ -545,34 +609,106 @@ WEAK void halide_dev_run(
     size_t arg_sizes[],
     void* args[])
 {
+    // need to do something with 
+    // let's use the entry name as a table index to look up the program
+    // we should have compiled the program at initialization
+    int program_idx = atoi(entry_name);
+    
+    // TODO: check that this program is valid?
+    GLuint program = __hl_gl_programs[program_idx];
+    glUseProgram(program);
+
+    // now set the arguments
+    // this is probably unnecessary - we only expect to see
+    // singles for each type (does Halide have vector args to fns?)
+    hl_gl_set_uniform_float_fn* set_float_fns[] = { &glUniform1fv,
+                                                    &glUniform2fv,
+                                                    &glUniform3fv,
+                                                    &glUniform4fv,
+    };
+    hl_gl_set_uniform_int_fn* set_int_fns[] = { &glUniform1iv,
+                                                &glUniform2iv,
+                                                &glUniform3iv,
+                                                &glUniform4iv,
+    };
+    hl_gl_set_uniform_uint_fn* set_uint_fns[] = { &glUniform1uiv,
+                                                  &glUniform2uiv,
+                                                  &glUniform3uiv,
+                                                  &glUniform4uiv,
+    };
+    int i = 0;
+    while(arg_sizes[i] != 0) {
+        hl_gl_shader_arg *arg = (hl_gl_shader_arg *) args[i];
+        GLint arg_location = glGetUniformLocation(program, arg->name);
+        if (arg->t == hl_gl_float_t) {
+            // for now we always set the count argument to 1
+            // not sure if we would ever want to change it
+            (*set_float_fns[arg->count])(arg_location,
+                                         1,
+                                         (const GLfloat*) arg->val);
+        } else if (arg->t == hl_gl_int_t) {
+            // at least one of these will actually be the input,
+            // but we don't need to do anything special
+            (*set_int_fns[arg->count])(arg_location,
+                                       1,
+                                       (const GLint*) arg->val);
+        } else if (arg->t == hl_gl_uint_t) {
+            (*set_uint_fns[arg->count])(arg_location,
+                                        1,
+                                        (const GLuint*) arg->val);
+        }
+    }
+    // TODO also need to set attributes
+    GLint position = glGetAttribLocation(program, "position");
+    glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer);
+    glVertexAttribPointer(position,  /* attribute */
+                          2,                                /* size */
+                          GL_FLOAT,                         /* type */
+                          GL_FALSE,                         /* normalized? */
+                          sizeof(GLfloat)*2,                /* stride */
+                          (void*)0                          /* array buffer offset */
+                          );
+    glEnableVertexAttribArray(position);
+    CHECK_ERROR();    
+
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, element_buffer);
+    glDrawElements(GL_TRIANGLE_STRIP,  /* mode */
+                   4,                  /* count */
+                   GL_UNSIGNED_SHORT,  /* type */
+                   (void*)0            /* element array buffer offset */
+                   );
+    
+    glDisableVertexAttribArray(position);
 }
-// fragment shader is the kernel here - we'll need a different one for each operation
 
-// vertex shader seems like it should always be the same
+int f(buffer_t *input, buffer_t *result, int N ) {
 
-/*
-int f( buffer_t *input, buffer_t *result, int N )
-{
-    const char* entry_name = "knl";
+    const char* entry_name = "0";
 
-    int threadsX = 128;
-    int threadsY =  1;
-    int threadsZ =  1;
-    int blocksX = N / threadsX;
+    // these don't actually matter? 
+    int threadsX = 1;
+    int threadsY = 1;
+    int threadsZ = 1;
+    int blocksX = 1;
     int blocksY = 1;
     int blocksZ = 1;
 
-
-    threadsX = 8;
-    threadsY =  1;
-    threadsZ =  1;
-    blocksX = 4;
-    blocksY = 4;
-    blocksZ = 1;
-
     // Invoke
-    size_t argSizes[] = { sizeof(cl_mem), sizeof(cl_mem), sizeof(int), 0 };
-    void* args[] = { &input->dev, &result->dev, &N, 0 };
+    // also doesn't matter?
+    size_t argSizes[] = { 1, 1, 1, 0};
+    // matters - maybe make this an array of structs?
+    void* args[4];
+
+    // things we need to do here
+    // set viewport to input dimensions (can we have multiple inputs/outputs?)
+    // to make accesing pixel locations easier
+    // what about differently sized input/outputs?
+    // add input dimensions as argument
+    // bind output to color attachment 0
+    // it seems like maybe we don't have to have the input texture bound to a framebuffer
+    // yeah we don't
+    
+    
     halide_dev_run(
         entry_name,
         blocksX,  blocksY,  blocksZ,
@@ -584,7 +720,6 @@ int f( buffer_t *input, buffer_t *result, int N )
 
     return 0;
 }
-*/
 
 // this should probably also be the same as the openCL version
 int main(int argc, char* argv[]) {
@@ -632,7 +767,7 @@ int main(int argc, char* argv[]) {
     */
 }
 
-} // extern C linkage
+// } // extern C linkage
 
 
 // OLD OPEN CL STUFF
@@ -723,21 +858,6 @@ WEAK buffer_t* __malloc_buffer(int32_t size)
 {
     return __make_buffer((uint8_t*)malloc(size), sizeof(uint8_t), size, 1, 1, 1);
 }
-
-    /*
-WEAK bool halide_validate_dev_pointer(buffer_t* buf, size_t size=0) {
-
-    size_t real_size;
-    cl_int result = clGetMemObjectInfo((cl_mem)buf->dev, CL_MEM_SIZE, sizeof(size_t), &real_size, NULL);
-    if (result) {
-        fprintf(stderr, "Bad device pointer %p: clGetMemObjectInfo returned %d\n", (void *)buf->dev, result);
-        return false;
-    }
-    fprintf(stderr, "validate %p: asked for %zu, actual allocated %zu\n", (void*)buf->dev, size, real_size);
-    if (size) assert(real_size >= size && "Validating pointer with insufficient size");
-    return true;
-}
-    */
 
 
 WEAK void halide_dev_free(buffer_t* buf) {
