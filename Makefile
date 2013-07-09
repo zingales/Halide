@@ -80,7 +80,7 @@ all: $(BIN_DIR)/libHalide.a $(BIN_DIR)/libHalide.so include/Halide.h include/Hal
 
 $(BIN_DIR)/libHalide.a: $(OBJECTS) $(INITIAL_MODULES)
 	@-mkdir -p $(BIN_DIR)
-	ld -r -o $(BUILD_DIR)/Halide.o $(OBJECTS) $(INITIAL_MODULES) $(LIBS)
+	$(LD) -r -o $(BUILD_DIR)/Halide.o $(OBJECTS) $(INITIAL_MODULES) $(LIBS)
 	rm -f $(BIN_DIR)/libHalide.a
 	ar q $(BIN_DIR)/libHalide.a $(BUILD_DIR)/Halide.o
 	ranlib $(BIN_DIR)/libHalide.a
@@ -268,6 +268,7 @@ $(DISTRIB_DIR)/halide.tgz: all
 	mkdir -p $(DISTRIB_DIR)/include $(DISTRIB_DIR)/lib
 	cp $(BIN_DIR)/libHalide.a $(BIN_DIR)/libHalide.so $(DISTRIB_DIR)/lib
 	cp include/Halide.h $(DISTRIB_DIR)/include
+	cp include/HalideRuntime.h $(DISTRIB_DIR)/include
 	tar -czf $(DISTRIB_DIR)/halide.tgz -C $(DISTRIB_DIR) lib include
 
 distrib: $(DISTRIB_DIR)/halide.tgz
