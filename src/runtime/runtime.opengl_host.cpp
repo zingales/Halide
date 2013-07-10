@@ -9,6 +9,7 @@ gcc -o test-gl runtime.opengl_host.o -L/usr/lib -lGL -lglut -lGLEW -lm
 #include <stdlib.h>
 #include <assert.h>
 #include <map>
+#include <string>
 #include "../buffer_t.h"
 
 // The PTX host extends the x86 target
@@ -68,10 +69,40 @@ gcc -o test-gl runtime.opengl_host.o -L/usr/lib -lGL -lglut -lGLEW -lm
 // ----------------------------------- global state -------------------------------------//
 
 // map from kernel name to OpenGL program object reference
-std::map<char*, GLuint> __gl_programs;
+static std::map<std::string, GLuint> __gl_programs;
+
+// shared framebuffer
+static GLuint __framebuffer;
 
 // have we initialized everything yet?
-bool __initialized;
+static bool __initialized;
+
+// these two arrays are going to be used by every program
+static GLuint vertex_buffer;
+static GLuint element_buffer;
+
+// info for filling said arrays
+static const GLfloat g_vertex_buffer_data[] = { 
+    -1.0f, -1.0f,
+    1.0f, -1.0f,
+    -1.0f, 1.0f,
+    1.0f, 1.0f
+};
+
+static const GLushort g_element_buffer_data[] = { 0, 1, 2, 3 };
+
+// vertex shader source
+const char* vertex_shader_src = \
+"#version 410                                    \n"\
+"in vec2 position;                               \n"\
+"out vec2 texcoord;                              \n"\
+"void main()                                     \n"\
+"{                                               \n"\
+"    gl_Position = vec4(position, 0.0, 1.0);     \n"\
+"    texcoord = position*vec2(0.5) + vec2(0.5);  \n"\
+"}                                               \n\0";
+
+static GLuint vertex_shader;
 
 //------------------------------------ non open GL helper functions ---------------------//
 
@@ -110,6 +141,26 @@ static int compare_images(float *ref, float* copy, int w, int h) {
 }
 
 //------------------------------------ open GL helper functions --------------------------//
+
+
+void check_framebuffer_status(GLuint framebuffer) {
+    SAY_HI();
+    GLenum status = glCheckFramebufferStatus(framebuffer);
+    if (status==GL_FRAMEBUFFER_COMPLETE) {
+        printf("framebuffer =)\n");
+    } else if (status==GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT) {
+        printf("GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT\n");
+        //} else if (status==GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS) {
+        //printf("GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS\n");
+    } else if (status==GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT) {
+        printf("GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT\n");
+    } else if (status==GL_FRAMEBUFFER_UNDEFINED) {
+        printf("GL_FRAMEBUFFER_UNDEFINED\n");
+    } else {
+        printf("%d\n", status);
+    }
+}
+
 
 /** make texture
  *  if data is NULL texture will be empty
@@ -184,13 +235,13 @@ static GLuint make_framebuffer(GLuint texture) {
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
                            GL_TEXTURE_RECTANGLE, texture, 0);
     CHECK_ERROR();
-
+    check_framebuffer_status(GL_FRAMEBUFFER);
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER)==GL_FRAMEBUFFER_COMPLETE) {
         printf("framebuffer =)\n");
     } else {
         printf("framebuffer =(\n");
     }
-
+    CHECK_ERROR();
     //unbind?
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
@@ -278,24 +329,7 @@ static GLuint make_program(GLuint vertex_shader, GLuint fragment_shader)
     return program;
 }
 
-static const GLfloat g_vertex_buffer_data[] = { 
-    -1.0f, -1.0f,
-    1.0f, -1.0f,
-    -1.0f, 1.0f,
-    1.0f, 1.0f
-};
 
-static const GLushort g_element_buffer_data[] = { 0, 1, 2, 3 };
-
-const char* vertex_shader_src = \
-"#version 410                                    \n"\
-"in vec2 position;                               \n"\
-"out vec2 texcoord;                              \n"\
-"void main()                                     \n"\
-"{                                               \n"\
-"    gl_Position = vec4(position, 0.0, 1.0);     \n"\
-"    texcoord = position*vec2(0.5) + vec2(0.5);  \n"\
-"}                                               \n\0";
 
 const char* fragment_shader_src = \
 "#version 410                                    \n"\
@@ -318,7 +352,7 @@ int main_old(int argc, char** argv)
     
     // prep GLUT - will initialize the GLUT library and negotiate 
     // a session with the window system
-    glutInit(&argc, argv);
+    glutInit(&argc, NULL);
     // specify what buffers default framebuffer should have
     // this specifies a colour buffer with double buffering
     //glutInitDisplayMode(GLUT_RGB | GLUT_DOUBLE);
@@ -372,6 +406,7 @@ int main_old(int argc, char** argv)
     CHECK_ERROR();
 
     // somehow we know what the current framebufffer is
+    printf("output_framebuffer: %d\n", output_framebuffer);
     glBindFramebuffer(GL_FRAMEBUFFER, output_framebuffer);
     glBindTexture(GL_TEXTURE_RECTANGLE, output_texture);
     const GLenum bufs[] = {GL_COLOR_ATTACHMENT0};
@@ -423,7 +458,8 @@ int main_old(int argc, char** argv)
     GLchar name[100];
     for (int i = 0; i < params; i++) {
         glGetActiveUniform(program, i, 100, &length, &size, &type, name);
-        printf("%s\n", name);
+        GLint loc = glGetUniformLocation(program, name);
+        printf("%s at %d\n", name, loc);
     }
     GLint fade_factor = glGetUniformLocation(program, "fade_factor");
     GLint input = glGetUniformLocation(program, "input");
@@ -436,8 +472,8 @@ int main_old(int argc, char** argv)
 
     // render
     glUseProgram(program);
-    // location, value
-    // things we need to know for each argument
+    // location, value 
+   // things we need to know for each argument
     // argument name
     // count
     // value (can be pointer)
@@ -526,11 +562,10 @@ int main_old(int argc, char** argv)
 // -------------------------- END OPENGL CODE ---------------------------------//
 
 // Used to create buffer_ts to track internal allocations caused by our runtime
-// For now exactly the same as the openCL version
 // TODO: add checks specific to the sorts of images that OpenGL can handle
 buffer_t* WEAK __make_buffer(uint8_t* host, size_t elem_size,
-                        size_t dim0, size_t dim1,
-                        size_t dim2, size_t dim3)
+                             size_t dim0, size_t dim1,
+                             size_t dim2, size_t dim3)
 {
     buffer_t* buf = (buffer_t*)malloc(sizeof(buffer_t));
     buf->host = host;
@@ -548,15 +583,61 @@ buffer_t* WEAK __make_buffer(uint8_t* host, size_t elem_size,
 // functions expected by CodeGen_GPU_Host
 
 WEAK void halide_dev_free(buffer_t* buf) {
-    // should delete framebuffer and texture associated with it
+    SAY_HI();
+    if (buf->dev) {
+        glDeleteTextures(1, (const GLuint *) buf->dev);
+    }
+    buf->dev = 0;
+    CHECK_ERROR();
 }
+
 WEAK void halide_dev_malloc(buffer_t* buf) {
-    // should create framebuffer and bind it to a texture
+    // we don't actually allocate memory here - we just get a name for the texture
+    SAY_HI();
+    if (buf->dev) {
+        printf("uhoh\n");
+        return;
+    }
+
+    // generate texture object name
+    GLuint texture;
+    // void glGenTextures(GLsizei  n, GLuint *  textures);
+    glGenTextures(1, &texture);
+    CHECK_ERROR();
+
+    // create texture object
+    glBindTexture(GL_TEXTURE_RECTANGLE, texture);
+    CHECK_ERROR();
+
+    // set parameters to use this texture as an image - use NN and clamp edges
+    glTexParameteri(GL_TEXTURE_RECTANGLE, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_RECTANGLE, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_RECTANGLE, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_RECTANGLE, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    CHECK_ERROR();
+
+    printf("made new texture: %d\n", (int) buf->dev);
+    int w = buf->extent[0];
+    int h = buf->extent[1];
+    // for now constrain buffer to have 3 color channels
+    assert(buf->extent[2] == 3);
+    assert(buf->extent[3] == 1);
+    GLenum format = GL_RGB;
+    GLenum type = GL_FLOAT;
+    GLint internal_format = GL_RGB32F;
+    glTexImage2D(GL_TEXTURE_RECTANGLE, 0, internal_format, w, h,
+                 0, format, type, NULL);
+
+    buf->dev = texture;
+
+    glBindTexture(GL_TEXTURE_RECTANGLE, 0);
+    CHECK_ERROR();
 }
 
 // Used to generate correct timings when tracing
 // If all went well with OpenGl, this won't die
 WEAK void halide_dev_sync() {  
+    SAY_HI();
     // glFinish does not return until the effects of all previously called GL commands are complete.
     // Such effects include all changes to GL state, all changes to connection state, and all changes
     // to the frame buffer contents.
@@ -565,41 +646,95 @@ WEAK void halide_dev_sync() {
 
 WEAK void halide_copy_to_dev(buffer_t* buf) {
     // should copy pixels from cpu memory to texture
+    SAY_HI();
+
+    if(buf->host_dirty) {
+        printf("copying texture %d to device\n", (int) buf->dev);
+        int w = buf->extent[0];
+        int h = buf->extent[1];
+        // for now constrain buffer to have 3 color channels
+        assert(buf->extent[2] == 3);
+        assert(buf->extent[3] == 1);
+        
+        glBindTexture(GL_TEXTURE_RECTANGLE, buf->dev);
+        CHECK_ERROR();
+        
+        GLenum format = GL_RGB;
+        GLenum type = GL_FLOAT;
+        GLint internal_format = GL_RGB32F;
+        glTexImage2D(GL_TEXTURE_RECTANGLE, 0, internal_format, w, h,
+                     0, format, type, (void *) buf->host);
+        CHECK_ERROR();
+        
+        glBindTexture(GL_TEXTURE_RECTANGLE, 0);
+        CHECK_ERROR();
+    }
+    buf->host_dirty = false;
 }
+
 WEAK void halide_copy_to_host(buffer_t* buf) {
     // should copy pixels from texture to cpu memory
+    SAY_HI();
+    if (buf->dev_dirty) {
+        glFinish(); // is this necessary?
+        glBindTexture(GL_TEXTURE_RECTANGLE, (GLuint) buf->dev);
+        glGetTexImage(GL_TEXTURE_RECTANGLE, 0, GL_RGB, GL_FLOAT, (void *) buf->host);
+        glBindTexture(GL_TEXTURE_RECTANGLE, 0);
+        CHECK_ERROR();
+    }
+    buf->dev_dirty = false;
 }
 
-// fragment shader is the kernel here - we'll need a different one for each operation
-
-// vertex shader seems like it should always be the same
-
-#define MAX_N_GL_PROGRAMS 100
-
-GLuint __hl_gl_programs[MAX_N_GL_PROGRAMS];
-
-enum hl_gl_uniform_t {
-    hl_gl_float_t,
-    hl_gl_int_t,
-    hl_gl_uint_t
-};
-
-typedef void (*hl_gl_set_uniform_uint_fn)(GLint, GLsizei, const GLuint*);
-typedef void (*hl_gl_set_uniform_float_fn)(GLint, GLsizei, const GLfloat*);
-typedef void (*hl_gl_set_uniform_int_fn)(GLint, GLsizei, const GLint*);
-    
-typedef struct {
-    char* name;
-    hl_gl_uniform_t t;
-    int count;
-    const void* val;
-} hl_gl_shader_arg;
-
-
-
-// these two arrays are going to be used by every program
-static GLuint vertex_buffer;
-static GLuint element_buffer;
+WEAK void halide_init_kernels(const char* src) {
+    // need to split src (use #version as delimiter?)
+    // and get kernel names (include as comments?)
+    SAY_HI();
+    if (!__initialized) {
+        // initialize openGL stuff
+        int argc = 0;
+        glutInit(&argc, NULL);
+        glutCreateWindow("Hello World");
+        glewInit();
+        // check flag for new enough version of OpenGL
+        if (!GLEW_VERSION_4_0) {
+            fprintf(stderr, "OpenGL 4.0 not available\n");
+        }
+        // make our framebuffer
+        printf("framebuffer %d\n", __framebuffer);
+        glGenFramebuffers(1, &__framebuffer);
+        check_framebuffer_status(GL_FRAMEBUFFER);
+        printf("framebuffer %d\n", __framebuffer);
+        CHECK_ERROR();
+        glBindFramebuffer(GL_FRAMEBUFFER, __framebuffer);
+        glDisable(GL_CULL_FACE);
+        glDisable(GL_DEPTH_TEST);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        CHECK_ERROR();
+        // make our vertex and element buffers
+        vertex_buffer = make_buffer(GL_ARRAY_BUFFER,
+                                    g_vertex_buffer_data,
+                                    sizeof(g_vertex_buffer_data));
+        element_buffer = make_buffer(GL_ELEMENT_ARRAY_BUFFER,
+                                     g_element_buffer_data,
+                                     sizeof(g_element_buffer_data));;
+        CHECK_ERROR();
+        // make our shaders - vertex shader is the same for all
+        vertex_shader = make_shader(GL_VERTEX_SHADER, vertex_shader_src, NULL);
+        CHECK_ERROR();
+        // now make fragment shader(s) from src
+        GLuint fragment_shader = make_shader(GL_FRAGMENT_SHADER, src, NULL);
+        const std::string knl_name = "knl";
+        printf("making fragment shader named %s with src:\n%s\n--------\n",
+               knl_name.c_str(), src);
+        // now make program
+        GLuint program = make_program(vertex_shader, fragment_shader);
+        __gl_programs[knl_name] = program;
+        CHECK_ERROR();
+        printf("kernel initialization success!\n");
+    }
+    // mark as initialized
+    __initialized = true;
+}
 
 WEAK void halide_dev_run(
     const char* entry_name,
@@ -609,55 +744,57 @@ WEAK void halide_dev_run(
     size_t arg_sizes[],
     void* args[])
 {
-    // need to do something with 
-    // let's use the entry name as a table index to look up the program
-    // we should have compiled the program at initialization
-    int program_idx = atoi(entry_name);
-    
-    // TODO: check that this program is valid?
-    GLuint program = __hl_gl_programs[program_idx];
-    glUseProgram(program);
+    SAY_HI();
 
-    // now set the arguments
-    // this is probably unnecessary - we only expect to see
-    // singles for each type (does Halide have vector args to fns?)
-    hl_gl_set_uniform_float_fn* set_float_fns[] = { &glUniform1fv,
-                                                    &glUniform2fv,
-                                                    &glUniform3fv,
-                                                    &glUniform4fv,
-    };
-    hl_gl_set_uniform_int_fn* set_int_fns[] = { &glUniform1iv,
-                                                &glUniform2iv,
-                                                &glUniform3iv,
-                                                &glUniform4iv,
-    };
-    hl_gl_set_uniform_uint_fn* set_uint_fns[] = { &glUniform1uiv,
-                                                  &glUniform2uiv,
-                                                  &glUniform3uiv,
-                                                  &glUniform4uiv,
-    };
-    int i = 0;
-    while(arg_sizes[i] != 0) {
-        hl_gl_shader_arg *arg = (hl_gl_shader_arg *) args[i];
-        GLint arg_location = glGetUniformLocation(program, arg->name);
-        if (arg->t == hl_gl_float_t) {
-            // for now we always set the count argument to 1
-            // not sure if we would ever want to change it
-            (*set_float_fns[arg->count])(arg_location,
-                                         1,
-                                         (const GLfloat*) arg->val);
-        } else if (arg->t == hl_gl_int_t) {
-            // at least one of these will actually be the input,
-            // but we don't need to do anything special
-            (*set_int_fns[arg->count])(arg_location,
-                                       1,
-                                       (const GLint*) arg->val);
-        } else if (arg->t == hl_gl_uint_t) {
-            (*set_uint_fns[arg->count])(arg_location,
-                                        1,
-                                        (const GLuint*) arg->val);
-        }
-    }
+    // attach output texture to framebuffer
+    GLuint input_texture = * (GLuint *) args[0];
+    GLuint output_texture = * (GLuint *) args[1];
+    printf("output_texture is %d\n", output_texture);
+    glBindTexture(GL_TEXTURE_RECTANGLE, output_texture);
+    CHECK_ERROR();
+    glBindFramebuffer(GL_FRAMEBUFFER, __framebuffer);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                           GL_TEXTURE_RECTANGLE, output_texture, 0);
+    CHECK_ERROR();
+    check_framebuffer_status(GL_FRAMEBUFFER);
+
+    // set the viewport to the size of the output
+    const GLenum bufs[] = {GL_COLOR_ATTACHMENT0};
+    CHECK_ERROR();
+    // The fragment shader output value is written into the nth color attachment
+    // of the current framebuffer. n may range from 0 to the value of GL_MAX_COLOR_ATTACHMENTS.
+    glDrawBuffers(1, bufs);
+    CHECK_ERROR();
+    
+    // render into entire framebuffer
+    glViewport(0, 0, threadsX, threadsY);
+    CHECK_ERROR();
+    // fetch the program
+    GLuint program =  __gl_programs[entry_name];
+    glUseProgram(program);    
+
+    // set args
+    GLint fade_factor = glGetUniformLocation(program, "fade_factor");
+    GLint input = glGetUniformLocation(program, "input");
+    GLint input_dim = glGetUniformLocation(program, "input_dim");
+    GLint useless = glGetUniformLocation(program, "useless");
+    
+    float fade_factor_val = 1.0;
+    glUniform1fv(fade_factor, 1, &fade_factor_val);
+    CHECK_ERROR();
+    GLint dims[] = {threadsX, threadsY};
+    glUniform2iv(input_dim, 1, dims); //(GLint) w, (GLint) h);
+    CHECK_ERROR();
+    float useless_val = 100000.0;
+    glUniform1fv(useless, 1, &useless_val);
+    glActiveTexture(GL_TEXTURE0);
+    CHECK_ERROR();
+    glBindTexture(GL_TEXTURE_RECTANGLE, input_texture);
+    CHECK_ERROR();
+    // i think the 0 matches texture 0
+    glUniform1i(input, 0);
+    
+
     // TODO also need to set attributes
     GLint position = glGetAttribLocation(program, "position");
     glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer);
@@ -669,7 +806,7 @@ WEAK void halide_dev_run(
                           (void*)0                          /* array buffer offset */
                           );
     glEnableVertexAttribArray(position);
-    CHECK_ERROR();    
+    CHECK_ERROR();
 
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, element_buffer);
     glDrawElements(GL_TRIANGLE_STRIP,  /* mode */
@@ -679,543 +816,91 @@ WEAK void halide_dev_run(
                    );
     
     glDisableVertexAttribArray(position);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
-int f(buffer_t *input, buffer_t *result, int N ) {
+int f(buffer_t *input, buffer_t *result ) {
+    SAY_HI();
+    const char* entry_name = "knl";
 
-    const char* entry_name = "0";
-
-    // these don't actually matter? 
-    int threadsX = 1;
-    int threadsY = 1;
-    int threadsZ = 1;
-    int blocksX = 1;
-    int blocksY = 1;
-    int blocksZ = 1;
+    int threadsX = result->extent[0];
+    int threadsY = result->extent[1];
+    int threadsZ = result->extent[2];
+    int blocksX = 1; // don't care
+    int blocksY = 1; // don't care
+    int blocksZ = 1; // don't care
+    int shared_mem_bytes = 0; // don't care
 
     // Invoke
     // also doesn't matter?
     size_t argSizes[] = { 1, 1, 1, 0};
     // matters - maybe make this an array of structs?
-    void* args[4];
+    void* args[] = { &input->dev, &result->dev, NULL, 0 };
 
-    // things we need to do here
-    // set viewport to input dimensions (can we have multiple inputs/outputs?)
-    // to make accesing pixel locations easier
-    // what about differently sized input/outputs?
-    // add input dimensions as argument
-    // bind output to color attachment 0
-    // it seems like maybe we don't have to have the input texture bound to a framebuffer
-    // yeah we don't
-    
-    
     halide_dev_run(
-        entry_name,
-        blocksX,  blocksY,  blocksZ,
-        threadsX, threadsY, threadsZ,
-        1, // sharedMemBytes
-        argSizes,
-        args
-    );
-
+                   entry_name,
+                   blocksX,  blocksY,  blocksZ,
+                   threadsX, threadsY, threadsZ,
+                   shared_mem_bytes,
+                   argSizes,
+                   args
+                   );
+    
     return 0;
 }
 
 // this should probably also be the same as the openCL version
 int main(int argc, char* argv[]) {
-
+    SAY_HI();
     printf("hello world!\n");
+#if 1
+    halide_init_kernels(fragment_shader_src);
 
-    main_old(0, NULL);
-    /*
-    halide_init_kernels(src);
+    int W = 100, H = 200, C = 3;
 
-    const int N = 2048;
     buffer_t in, out;
 
     in.dev = 0;
-    in.host = (uint8_t*)malloc(N*sizeof(float));
+    in.host = (uint8_t*) random_image(W, H, C, 1);
     in.elem_size = sizeof(float);
-    in.extent[0] = N; in.extent[1] = 1; in.extent[2] = 1; in.extent[3] = 1;
+    in.extent[0] = W; in.extent[1] = H; in.extent[2] = C; in.extent[3] = 1;
 
     out.dev = 0;
-    out.host = (uint8_t*)malloc(N*sizeof(float));
+    out.host = (uint8_t*) empty_image(W, H, C, 1);
     out.elem_size = sizeof(float);
-    out.extent[0] = N; out.extent[1] = 1; out.extent[2] = 1; out.extent[3] = 1;
+    out.extent[0] = W; out.extent[1] = H; out.extent[2] = C; out.extent[3] = 1;
 
-    for (int i = 0; i < N; i++) {
-        ((float*)in.host)[i] = i / 2.0;
-    }
     in.host_dirty = true;
 
     halide_dev_malloc(&in);
     halide_dev_malloc(&out);
     halide_copy_to_dev(&in);
 
-    f( &in, &out, N );
+    f(&in, &out);
 
     out.dev_dirty = true;
     halide_copy_to_host(&out);
-
-    for (int i = 0; i < N; i++) {
-        float a = ((float*)in.host)[i];
-        float b = ((float*)out.host)[i];
-        if (b != a*a) {
-            printf("[%d] %f != %f^2\n", i, b, a);
+    float fade_factor_val = 1.0;
+    for (int y = 0; y < H; y++) {
+        for (int x = 0; x < W; x++) {
+            for (int c = 0; c < 3; c++) {
+                int idx = y*W*3 + x*3 + c;
+                float tex_val = ((float *) in.host)[idx];
+                float ref = fade_factor_val*tex_val*tex_val;
+                float result = ((float *) out.host)[idx];
+                if (ref != result) {
+                    printf("mismatch at (%d, %d, %d), ref: %f  result: %f\n",
+                           x, y, c, ref, result);
+                }
+            }
         }
     }
-    */
+    printf("all good!\n");
+#else
+    main_old(0, NULL);
+#endif
 }
 
 // } // extern C linkage
 
-
-// OLD OPEN CL STUFF
-
-#if 0
-
-/*
- * Build standalone test (on Mac) with:
- *
- *   clang -framework OpenCL -DTEST_STUB runtime.opencl_host.cpp
- */
-
-
-extern "C" {
-
-// #define NDEBUG // disable logging/asserts for performance
-
-#ifdef NDEBUG
-#define CHECK_ERR(e,str)
-#define CHECK_CALL(c,str) (c)
-#define TIME_START()
-#define TIME_CHECK(str)
-#else // DEBUG
-#define CHECK_ERR(err,str) fprintf(stderr, "Do %s\n", str); \
-                         if (err != CL_SUCCESS)           \
-                            fprintf(stderr, "CL: %s returned non-success: %d\n", str, err); \
-                         assert(err == CL_SUCCESS)
-#define CHECK_CALL(c,str) {                                                 \
-    fprintf(stderr, "Do %s\n", str);                                        \
-    int err = (c);                                                          \
-    if (err != CL_SUCCESS)                                                  \
-        fprintf(stderr, "CL: %s returned non-success: %d\n", str, err);  \
-    assert(err == CL_SUCCESS);                                              \
-} halide_current_time() // just *some* expression fragment after which it's legal to put a ;
-#if 0
-#define TIME_START() cuEventRecord(__start, 0)
-#define TIME_CHECK(str) {\
-    cuEventRecord(__end, 0);                                \
-    cuEventSynchronize(__end);                              \
-    float msec;                                             \
-    cuEventElapsedTime(&msec, __start, __end);              \
-    printf(stderr, "Do %s\n", str);                         \
-    printf("   (took %fms, t=%d)\n", msec, halide_current_time());  \
-} halide_current_time() // just *some* expression fragment after which it's legal to put a ;
-#else
-#define TIME_START()
-#define TIME_CHECK(str)
-#endif
-#endif //NDEBUG
-
-
-
-// Device, Context, Module, and Function for this entrypoint are tracked locally
-// and constructed lazily on first run.
-// TODO: make __f, __mod into arrays?
-// static vector<CUfunction> __f;
-}
-extern "C" {
-cl_context WEAK cl_ctx = 0;
-cl_command_queue WEAK cl_q = 0;
-
-static cl_program __mod;
-// static CUevent __start, __end;
-
-// Used to create buffer_ts to track internal allocations caused by our runtime
-buffer_t* WEAK __make_buffer(uint8_t* host, size_t elem_size,
-                        size_t dim0, size_t dim1,
-                        size_t dim2, size_t dim3)
-{
-    buffer_t* buf = (buffer_t*)malloc(sizeof(buffer_t));
-    buf->host = host;
-    buf->dev = 0;
-    buf->extent[0] = dim0;
-    buf->extent[1] = dim1;
-    buf->extent[2] = dim2;
-    buf->extent[3] = dim3;
-    buf->elem_size = elem_size;
-    buf->host_dirty = false;
-    buf->dev_dirty = false;
-    return buf;
-}
-
-WEAK void __release_buffer(buffer_t* buf)
-{
-    free(buf);
-}
-WEAK buffer_t* __malloc_buffer(int32_t size)
-{
-    return __make_buffer((uint8_t*)malloc(size), sizeof(uint8_t), size, 1, 1, 1);
-}
-
-
-WEAK void halide_dev_free(buffer_t* buf) {
-
-    /*
-      buffer on device is framebuffer and texture
-     */
-
-    #ifndef NDEBUG
-    fprintf(stderr, "In dev_free of %p - dev: 0x%p\n", buf, (void*)buf->dev);
-    #endif
-
-    assert(halide_validate_dev_pointer(buf));
-    CHECK_CALL( clReleaseMemObject((cl_mem)buf->dev), "clReleaseMemObject" );
-    buf->dev = 0;
-}
-
-WEAK void halide_init_kernels(const char* src) {
-    /*
-      do openGL initialization stuff here
-      also initialize shaders, which will be our equivalent of kernels
-     */
-    int err;
-    cl_device_id dev;
-    // Initialize one shared context for all Halide compiled instances
-    if (!cl_ctx) {
-        // Make sure we have a device
-        const cl_uint maxDevices = 4;
-        cl_device_id devices[maxDevices];
-        cl_uint deviceCount = 0;
-        err = clGetDeviceIDs( NULL, CL_DEVICE_TYPE_ALL, maxDevices, devices, &deviceCount );
-        CHECK_ERR( err, "clGetDeviceIDs" );
-        if (deviceCount == 0) {
-            fprintf(stderr, "Failed to get device\n");
-            return;
-        }
-        
-        dev = devices[deviceCount-1];
-
-        #ifndef NDEBUG
-        fprintf(stderr, "Got device %lld, about to create context (t=%d)\n", (long long)dev, halide_current_time());
-        #endif
-
-
-        // Create context
-        cl_ctx = clCreateContext(0, 1, &dev, NULL, NULL, &err);
-        CHECK_ERR( err, "clCreateContext" );
-        // cuEventCreate(&__start, 0);
-        // cuEventCreate(&__end, 0);
-        
-        assert(!cl_q);
-        cl_q = clCreateCommandQueue(cl_ctx, dev, 0, &err);
-        CHECK_ERR( err, "clCreateCommandQueue" );
-    } else {
-        //CHECK_CALL( cuCtxPushCurrent(cuda_ctx), "cuCtxPushCurrent" );
-    }
-    
-    // Initialize a module for just this Halide module
-    if (!__mod) {
-        #ifndef NDEBUG
-        fprintf(stderr, "-------\nCompiling kernel source:\n%s\n--------\n", src);
-        #endif
-
-        // Create module
-        __mod = clCreateProgramWithSource(cl_ctx, 1, (const char**)&src, NULL, &err );
-        CHECK_ERR( err, "clCreateProgramWithSource" );
-
-        err = clBuildProgram( __mod, 0, NULL, NULL, NULL, NULL );
-        if (err != CL_SUCCESS) {
-            size_t len;
-            char buffer[2048];
-
-            fprintf(stderr, "Error: Failed to build program executable!\n");
-            clGetProgramBuildInfo(__mod, dev, CL_PROGRAM_BUILD_LOG, sizeof(buffer), buffer, &len);
-            fprintf(stderr, "%s\n", buffer);
-            assert(err == CL_SUCCESS);
-        }
-    }
-}
-
-// Used to generate correct timings when tracing
-WEAK void halide_dev_sync() {
-    // Blocks until all previously queued OpenCL commands in command_queue are issued to the associated device and have completed.
-    // clFinish(cl_q);
-    
-    // glFinish does not return until the effects of all previously called GL commands are complete.
-    // Such effects include all changes to GL state, all changes to connection state, and all changes
-    // to the frame buffer contents.
-    glFinish();
-}
-
-WEAK void halide_release() {
-    // cleanup
-
-    // TODO: this is for timing; bad for release-mode performance
-    #ifndef NDEBUG
-    fprintf( stderr, "dev_sync on exit" );
-    #endif
-    halide_dev_sync();
-
-    // TODO: destroy context if we own it
-
-    // Unload the module
-    if (__mod) {
-        CHECK_CALL( clReleaseProgram(__mod), "clReleaseProgram" );
-        __mod = 0;
-    }
-}
-
-static cl_kernel __get_kernel(const char* entry_name) {
-    cl_kernel f;
-    #ifdef NDEBUG
-    // char msg[1];
-    #else
-    char msg[256];
-    snprintf(msg, 256, "get_kernel %s (t=%d)", entry_name, halide_current_time() );
-    #endif
-    // Get kernel function ptr
-    TIME_START();
-    int err;
-    f = clCreateKernel(__mod, entry_name, &err);
-    CHECK_ERR(err, "clCreateKernel");
-    TIME_CHECK(msg);
-    return f;
-}
-
-static cl_mem __dev_malloc(size_t bytes) {
-    cl_mem p;
-    #ifdef NDEBUG
-    // char msg[1];
-    #else
-    char msg[256];
-    snprintf(msg, 256, "dev_malloc (%zu bytes) (t=%d)", bytes, halide_current_time() );
-    #endif
-    TIME_START();
-    int err;
-    p = clCreateBuffer( cl_ctx, CL_MEM_READ_WRITE, bytes, NULL, &err );
-    TIME_CHECK(msg);
-    #ifndef NDEBUG
-    fprintf(stderr, "    returned: %p (err: %d)\n", (void*)p, err);
-    #endif
-    assert(p);
-    return p;
-}
-
-// for now should be same as from openCL
-static inline size_t buf_size(buffer_t* buf) {
-    size_t sz = buf->elem_size;
-    if (buf->extent[0]) sz *= buf->extent[0];
-    if (buf->extent[1]) sz *= buf->extent[1];
-    if (buf->extent[2]) sz *= buf->extent[2];
-    if (buf->extent[3]) sz *= buf->extent[3];
-    assert(sz);
-    return sz;
-}
-
-WEAK void halide_dev_malloc(buffer_t* buf) {
-
-    // set up framebuffer on device
-
-    #ifndef NDEBUG
-    fprintf(stderr, "dev_malloc of %dx%dx%dx%d (%d bytes) (buf->dev = %p) buffer\n",
-            buf->extent[0], buf->extent[1], buf->extent[2], buf->extent[3], buf->elem_size, (void*)buf->dev);
-    #endif
-    if (buf->dev) {
-        assert(halide_validate_dev_pointer(buf));
-        return;
-    }
-    size_t size = buf_size(buf);
-    buf->dev = (uint64_t)__dev_malloc(size);
-    assert(buf->dev);
-}
-
-WEAK void halide_copy_to_dev(buffer_t* buf) {
-    if (buf->host_dirty) {
-        assert(buf->host && buf->dev);
-        size_t size = buf_size(buf);
-        #ifdef NDEBUG
-        // char msg[1];
-        #else
-        char msg[256];
-        snprintf(msg, 256, "copy_to_dev (%zu bytes) %p -> %p (t=%d)", size, buf->host, (void*)buf->dev, halide_current_time() );
-        #endif
-        assert(halide_validate_dev_pointer(buf));
-        TIME_START();
-        int err = clEnqueueWriteBuffer( cl_q, (cl_mem)((void*)buf->dev), CL_TRUE, 0, size, buf->host, 0, NULL, NULL );
-        CHECK_ERR( err, msg );
-        TIME_CHECK(msg);
-    }
-    buf->host_dirty = false;
-}
-
-WEAK void halide_copy_to_host(buffer_t* buf) {
-
-    // texImage2D
-
-    if (buf->dev_dirty) {
-        clFinish(cl_q); // block on completion before read back
-        assert(buf->host && buf->dev);
-        size_t size = buf_size(buf);
-        #ifdef NDEBUG
-        char msg[1];
-        #else
-        char msg[256];
-        snprintf(msg, 256, "copy_to_host (%zu bytes) %p -> %p", size, (void*)buf->dev, buf->host );
-        #endif
-        assert(halide_validate_dev_pointer(buf, size));
-        TIME_START();
-        printf("%s\n", msg);
-        int err = clEnqueueReadBuffer( cl_q, (cl_mem)((void*)buf->dev), CL_TRUE, 0, size, buf->host, 0, NULL, NULL );
-        CHECK_ERR( err, msg );
-        TIME_CHECK(msg);
-    }
-    buf->dev_dirty = false;
-}
-#define _COPY_TO_HOST
-
-WEAK void halide_dev_run(
-    const char* entry_name,
-    int blocksX, int blocksY, int blocksZ,
-    int threadsX, int threadsY, int threadsZ,
-    int shared_mem_bytes,
-    size_t arg_sizes[],
-    void* args[])
-{
-    cl_kernel f = __get_kernel(entry_name);
-    #ifdef NDEBUG
-    char msg[1];
-    #else
-    char msg[256];
-    snprintf(
-        msg, 256,
-        "dev_run %s with (%dx%dx%d) blks, (%dx%dx%d) threads, %d shmem (t=%d)",
-        entry_name, blocksX, blocksY, blocksZ, threadsX, threadsY, threadsZ, shared_mem_bytes,
-        halide_current_time()
-    );
-    #endif
-    // Pack dims
-    size_t global_dim[3] = {blocksX*threadsX,  blocksY*threadsY,  blocksZ*threadsZ};
-    size_t local_dim[3] = {threadsX, threadsY, threadsZ};
-
-    // Set args
-    int i = 0;
-    while (arg_sizes[i] != 0) {
-        CHECK_CALL( clSetKernelArg(f, i, arg_sizes[i], args[i]), "clSetKernelArg" );
-        i++;
-    }
-    // Set the shared mem buffer last
-    // Always set at least 1 byte of shmem, to keep the launch happy
-    CHECK_CALL( clSetKernelArg(f, i, (shared_mem_bytes > 0) ? shared_mem_bytes : 1, NULL), "clSetKernelArg" );
-
-    // Launch kernel
-    TIME_START();
-    fprintf(stderr, "%s\n", msg);
-    int err =
-    clEnqueueNDRangeKernel(
-        cl_q,
-        f,
-        3,
-        NULL,
-        global_dim,
-        local_dim,
-        0, NULL, NULL
-    );
-    CHECK_ERR(err, "clEnqueueNDRangeKernel");
-    TIME_CHECK(msg);
-    fprintf(stderr, "clEnqueueNDRangeKernel: %d\n", err);
-}
-
-#ifdef TEST_STUB
-const char* src = "                                               \n"\
-"__kernel void knl(                                                       \n" \
-"   __global float* input,                                              \n" \
-"   __global float* output,                                             \n" \
-"   const unsigned int count,                                           \n" \
-"   __local uchar* shared)                                            \n" \
-"{                                                                      \n" \
-"   int i = get_global_id(0);                                           \n" \
-"   if(i < count)                                                       \n" \
-"       output[i] = input[i] * input[i];                                \n" \
-"}                                                                      \n";
-
-int f( buffer_t *input, buffer_t *result, int N )
-{
-    const char* entry_name = "knl";
-
-    int threadsX = 128;
-    int threadsY =  1;
-    int threadsZ =  1;
-    int blocksX = N / threadsX;
-    int blocksY = 1;
-    int blocksZ = 1;
-
-
-    threadsX = 8;
-    threadsY =  1;
-    threadsZ =  1;
-    blocksX = 4;
-    blocksY = 4;
-    blocksZ = 1;
-
-    // Invoke
-    size_t argSizes[] = { sizeof(cl_mem), sizeof(cl_mem), sizeof(int), 0 };
-    void* args[] = { &input->dev, &result->dev, &N, 0 };
-    halide_dev_run(
-        entry_name,
-        blocksX,  blocksY,  blocksZ,
-        threadsX, threadsY, threadsZ,
-        1, // sharedMemBytes
-        argSizes,
-        args
-    );
-
-    return 0;
-}
-
-// this should probably also be the same as the openCL version
-int main(int argc, char* argv[]) {
-    halide_init_kernels(src);
-
-    const int N = 2048;
-    buffer_t in, out;
-
-    in.dev = 0;
-    in.host = (uint8_t*)malloc(N*sizeof(float));
-    in.elem_size = sizeof(float);
-    in.extent[0] = N; in.extent[1] = 1; in.extent[2] = 1; in.extent[3] = 1;
-
-    out.dev = 0;
-    out.host = (uint8_t*)malloc(N*sizeof(float));
-    out.elem_size = sizeof(float);
-    out.extent[0] = N; out.extent[1] = 1; out.extent[2] = 1; out.extent[3] = 1;
-
-    for (int i = 0; i < N; i++) {
-        ((float*)in.host)[i] = i / 2.0;
-    }
-    in.host_dirty = true;
-
-    halide_dev_malloc(&in);
-    halide_dev_malloc(&out);
-    halide_copy_to_dev(&in);
-
-    f( &in, &out, N );
-
-    out.dev_dirty = true;
-    halide_copy_to_host(&out);
-
-    for (int i = 0; i < N; i++) {
-        float a = ((float*)in.host)[i];
-        float b = ((float*)out.host)[i];
-        if (b != a*a) {
-            printf("[%d] %f != %f^2\n", i, b, a);
-        }
-    }
-}
-
-#endif
-
-} // extern "C" linkage
-
-#endif
