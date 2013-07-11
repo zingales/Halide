@@ -384,7 +384,7 @@ WEAK void halide_init_kernels(const char* src) {
             size_t knl_name_end = knl.find(knl_name_delimiter, knl_name_start);
             knl_name = knl.substr(knl_name_start, knl_name_end - knl_name_start);
             printf("making fragment shader named %s with src:\n---------\n%s\n--------\n",
-                   knl_name.c_str(), src);
+                   knl_name.c_str(), knl.c_str());
             GLuint fragment_shader = make_shader(GL_FRAGMENT_SHADER, knl.c_str(), NULL);
             // now make program
             GLuint program = make_program(vertex_shader, fragment_shader);
