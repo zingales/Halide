@@ -1,3 +1,5 @@
+#define TEST_STUB
+
 /* build test
 
 g++ -c -o runtime.opengl_host.o runtime.opengl_host.cpp -I/usr/include
@@ -36,8 +38,6 @@ gcc -o test-gl runtime.opengl_host.o -L/usr/lib -lGL -lglut -lGLEW -lm
 #include <GL/glew.h>
 
 #define WEAK __attribute__((weak))
-
-//extern "C" {
 
 // -------------------------- BEGIN OPENGL CODE ---------------------------------//
 
@@ -93,56 +93,24 @@ static const GLushort g_element_buffer_data[] = { 0, 1, 2, 3 };
 
 // vertex shader source
 const char* vertex_shader_src = \
-"#version 410                                    \n"\
-"in vec2 position;                               \n"\
-"out vec2 texcoord;                              \n"\
-"void main()                                     \n"\
-"{                                               \n"\
-"    gl_Position = vec4(position, 0.0, 1.0);     \n"\
-"    texcoord = position*vec2(0.5) + vec2(0.5);  \n"\
-"}                                               \n\0";
+"#version 410                                         \n"\
+"in vec2 position;                                    \n"\
+"out vec2 pixcoord;                                   \n"\
+"uniform ivec2 output_dim;                            \n"\
+"void main()                                          \n"\
+"{                                                    \n"\
+"    gl_Position = vec4(position, 0.0, 1.0);          \n"\
+"    vec2 texcoord = position*vec2(0.5) + vec2(0.5);  \n"\
+"    pixcoord = output_dim*texcoord;                  \n"\
+"}                                                    \n\0";
 
 static GLuint vertex_shader;
 
-//------------------------------------ non open GL helper functions ---------------------//
-
-static float *empty_image(int dim0, int dim1, int dim2, int dim3) {
-    SAY_HI();
-    return (float *) calloc(dim0*dim1*dim2*dim3, sizeof(float));
-}
-
-static float *random_image(int dim0, int dim1, int dim2, int dim3) {
-    SAY_HI();
-    int sz = dim0*dim1*dim2*dim3;
-    float *img = (float*) malloc(sz*sizeof(float));
-    for (int i = 0; i < sz; i++) {
-        img[i] = rand();
-    }
-    return img;
-}
-
-static int compare_images(float *ref, float* copy, int w, int h) {
-    SAY_HI();
-    for (int x = 0; x < w; x++) {
-        for (int y = 0; y < h; y++) {
-            for (int c = 0; c < 3; c++) {
-                int idx = y*w*3 + x*3 + c;
-                float ref_c = ref[idx];
-                float copy_c = copy[idx];
-                if (ref_c!=copy_c) {
-                    printf("mismatch at (%d, %d, %d): expected %f but found %f\n",
-                           x, y, c, ref_c, copy_c);
-                    return -1;
-                }
-           }
-        }
-    }
-    return 0;
-}
-
 //------------------------------------ open GL helper functions --------------------------//
 
-
+/**
+ * handle framebuffer errors
+ */
 void check_framebuffer_status(GLuint framebuffer) {
     SAY_HI();
     GLenum status = glCheckFramebufferStatus(framebuffer);
@@ -161,95 +129,8 @@ void check_framebuffer_status(GLuint framebuffer) {
     }
 }
 
-
-/** make texture
- *  if data is NULL texture will be empty
- */
-static GLuint make_texture(int w,
-                           int h,
-                           void *data) {
-
-    SAY_HI();
-
-    // generate texture object name
-    GLuint texture;
-    // void glGenTextures(GLsizei  n, GLuint *  textures);
-    glGenTextures(1, &texture);
-    CHECK_ERROR();
-
-    // create texture object
-    glBindTexture(GL_TEXTURE_RECTANGLE, texture);
-    CHECK_ERROR();
-
-    // set parameters to use this texture as an image - use NN and clamp edges
-    // should use i instead of f here? or shouldn't make difference
-    glTexParameteri(GL_TEXTURE_RECTANGLE, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_RECTANGLE, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_RECTANGLE, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_RECTANGLE, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    CHECK_ERROR();
-
-    // it looks like we can bind NULL data with glTexImage2D if we intend to
-    // render into this buffer
-    // it's unclear if we can split this into two operations
-    // maybe would make sense to generate the names and count that as allocation?
-    // void TexImage2D( enum target, int level,
-    //                  int internalformat, sizei width, sizei height,
-    //                  int border, enum format, enum type, void *data );
-    // TODO: fix data format
-    glTexImage2D(GL_TEXTURE_RECTANGLE, 0, GL_RGB32F, w, h,
-                 0, GL_RGB, GL_FLOAT, data);
-    CHECK_ERROR();
-
-    return texture;
-}
-
-/** make a framebuffer and bind it to a texture
- */
-static GLuint make_framebuffer(GLuint texture) {
-
-    SAY_HI();
-
-    // generate buffer object name
-    GLuint framebuffer;
-
-    // void glGenBuffers(GLsizei  n, GLuint *  buffers);
-    glGenFramebuffers(1, &framebuffer);
-    CHECK_ERROR();
-
-    // framebuffer is created by binding an unused name to target framebuffer
-    // void BindFramebuffer( enum target, uint framebuffer );
-    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
-    CHECK_ERROR();
-
-    // http://stackoverflow.com/questions/4264775/opengl-trouble-with-render-to-texture-framebuffer-object
-    // suggests that we should do this because we don't need the depth buffer
-    // so long, depth buffer, and thanks for all the fish
-    glDisable(GL_CULL_FACE);
-    glDisable(GL_DEPTH_TEST);
-    CHECK_ERROR();
-
-    // specify texture as color attachment to framebuffer
-    glBindTexture(GL_TEXTURE_RECTANGLE, texture);
-    // this is what binds our output buffer
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                           GL_TEXTURE_RECTANGLE, texture, 0);
-    CHECK_ERROR();
-    check_framebuffer_status(GL_FRAMEBUFFER);
-    if (glCheckFramebufferStatus(GL_FRAMEBUFFER)==GL_FRAMEBUFFER_COMPLETE) {
-        printf("framebuffer =)\n");
-    } else {
-        printf("framebuffer =(\n");
-    }
-    CHECK_ERROR();
-    //unbind?
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
-    return framebuffer;
-}
-
-/* 
- * Handles shader errors
+/**
+ * handle shader errors
  */
 static void show_info_log(GLuint object,
 			  PFNGLGETSHADERIVPROC glGet__iv,
@@ -264,8 +145,8 @@ static void show_info_log(GLuint object,
     free(log);
 }
 
-/*
- * Make shader from string
+/**
+ * make shader from string
  */
 static GLuint make_shader(GLenum type, const char *source, GLint *length)
 {
@@ -294,7 +175,7 @@ static GLuint make_shader(GLenum type, const char *source, GLint *length)
     return shader;
 }
 
-/*
+/**
  * make buffer for storing vertex arrays
  */
 static GLuint make_buffer(GLenum target,
@@ -307,7 +188,7 @@ static GLuint make_buffer(GLenum target,
     return buffer;
 }
 
-/*
+/**
  * make a program from a vertex and fragment shader
  */
 static GLuint make_program(GLuint vertex_shader, GLuint fragment_shader)
@@ -328,236 +209,6 @@ static GLuint make_program(GLuint vertex_shader, GLuint fragment_shader)
     }
     return program;
 }
-
-
-
-const char* fragment_shader_src = \
-"#version 410                                    \n"\
-"uniform sampler2DRect input;                    \n"\
-"uniform ivec2 input_dim;                        \n"\
-"uniform float fade_factor;                      \n"\
-"uniform float useless;                      \n"\
-"in vec2 texcoord;                               \n"\
-"out vec4 output;                                \n"\
-"void main()                                     \n"\
-"{                                               \n"\
-"    vec2 input_coord = input_dim*texcoord;      \n"\
-"    vec4 tex_val = texture(input, input_coord); \n"\
-"    output = fade_factor*tex_val*tex_val;       \n"\
-"}                                               \n\0";
-
-int main_old(int argc, char** argv)
-{
-    SAY_HI();
-    
-    // prep GLUT - will initialize the GLUT library and negotiate 
-    // a session with the window system
-    glutInit(&argc, NULL);
-    // specify what buffers default framebuffer should have
-    // this specifies a colour buffer with double buffering
-    //glutInitDisplayMode(GLUT_RGB | GLUT_DOUBLE);
-    // set window size to 400x300
-    GLint w = 768;
-    GLint h = 1024;
-    //glutInitWindowSize(w, h);
-    // create window (arg is char* name)
-    // this is necessary for initializing openGL
-    glutCreateWindow("Hello World");
-    // set display callback for current window
-    // takes function pointer to void function w/ no args
-    // void glutDisplayFunc(void (*func)(void))
-    //glutDisplayFunc(&render);
-    // idle callback is continuously called when events are not being received
-    // this will update the fade factor between the two images over time
-    //glutIdleFunc(&update_fade_factor);
-    
-    // sets a bunch of flags based on what extensions and OpenGL versions
-    // are available
-    glewInit();
-    // check flag for new enough version of OpenGL
-    if (!GLEW_VERSION_4_0) {
-        fprintf(stderr, "OpenGL 4.0 not available\n");
-        return 1;
-    }
-
-    /*
-     * Data used to seed our vertex array and element array buffers.
-     * glBufferData just sees this as a stream of bytes.
-     * Specify vertices and ordering to make triangles out of them.
-     */
-
-    
-    float *data = random_image(w, h, 3, 1);
-
-    // generate texture object name
-    GLuint input_texture = make_texture(w, h, (void *) data);
-    CHECK_ERROR();
-    
-    // generate buffer object name
-    // GLuint input_framebuffer = make_framebuffer(input_texture);
-    CHECK_ERROR();
-
-    // generate texture object name
-    GLuint output_texture = make_texture(w, h, NULL);
-    CHECK_ERROR();
-    
-    // generate buffer object name
-    GLuint output_framebuffer = make_framebuffer(output_texture);
-    CHECK_ERROR();
-
-    // somehow we know what the current framebufffer is
-    printf("output_framebuffer: %d\n", output_framebuffer);
-    glBindFramebuffer(GL_FRAMEBUFFER, output_framebuffer);
-    glBindTexture(GL_TEXTURE_RECTANGLE, output_texture);
-    const GLenum bufs[] = {GL_COLOR_ATTACHMENT0};
-    CHECK_ERROR();
-
-    
-    // Specifies a list of color buffers to be drawn into.
-    // void glDrawBuffers(GLsizei  n, // number of buffers in bufs
-    //                    const GLenum * bufs);
-    // The fragment shader output value is written into the nth color attachment
-    // of the current framebuffer. n may range from 0 to the value of GL_MAX_COLOR_ATTACHMENTS.
-    glDrawBuffers(1, bufs);
-    CHECK_ERROR();
-    
-    // render into entire framebuffer
-    glViewport(0, 0, w, h);
-    
-    // render
-
-    // make buffers
-    GLuint vertex_buffer = make_buffer(GL_ARRAY_BUFFER,
-                                       g_vertex_buffer_data,
-                                       sizeof(g_vertex_buffer_data));
-    GLuint element_buffer = make_buffer(GL_ELEMENT_ARRAY_BUFFER,
-                                        g_element_buffer_data,
-                                        sizeof(g_element_buffer_data));;
-    CHECK_ERROR();
-    // make shaders
-    GLchar *shader_src = (GLchar *) vertex_shader_src;
-    GLuint vertex_shader = make_shader(GL_VERTEX_SHADER, shader_src, NULL);
-    if (vertex_shader == 0) { return 0; }
-    CHECK_ERROR();
-    printf("here!\n");
-    shader_src = (GLchar *) fragment_shader_src;
-    GLuint fragment_shader = make_shader(GL_FRAGMENT_SHADER, shader_src, NULL);
-    if (fragment_shader == 0) { return 0; }
-    CHECK_ERROR();
-
-    // make program
-    GLuint program = make_program(vertex_shader, fragment_shader);
-
-    // let's print out stuff just for fun
-    GLint params;
-    glGetProgramiv(program, GL_ACTIVE_UNIFORMS, &params);
-    printf("number of active uniforms is %d\n", (int) params);
-    GLsizei length;
-    GLint size;
-    GLenum type;
-    GLchar name[100];
-    for (int i = 0; i < params; i++) {
-        glGetActiveUniform(program, i, 100, &length, &size, &type, name);
-        GLint loc = glGetUniformLocation(program, name);
-        printf("%s at %d\n", name, loc);
-    }
-    GLint fade_factor = glGetUniformLocation(program, "fade_factor");
-    GLint input = glGetUniformLocation(program, "input");
-    GLint input_dim = glGetUniformLocation(program, "input_dim");
-    GLint useless = glGetUniformLocation(program, "useless");
-    GLint position = glGetAttribLocation(program, "position");
-    CHECK_ERROR();
-
-    float fade_factor_val = 1.0;
-
-    // render
-    glUseProgram(program);
-    // location, value 
-   // things we need to know for each argument
-    // argument name
-    // count
-    // value (can be pointer)
-    // since args is an array of void*s we could pass in an array of structs
-    // that have type and name information
-    glUniform1fv(fade_factor, 1, &fade_factor_val);
-    CHECK_ERROR();
-    GLint dims[] = {w, h};
-    glUniform2iv(input_dim, 1, dims); //(GLint) w, (GLint) h);
-    CHECK_ERROR();
-    float useless_val = 100000.0;
-    glUniform1fv(useless, 1, &useless_val);
-    glActiveTexture(GL_TEXTURE0);
-    CHECK_ERROR();
-    glBindTexture(GL_TEXTURE_RECTANGLE, input_texture);
-    CHECK_ERROR();
-    // i think the 0 matches texture 0
-    glUniform1i(input, 0);
-    CHECK_ERROR();
-
-    glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer);
-    glVertexAttribPointer(position,  /* attribute */
-                          2,                                /* size */
-                          GL_FLOAT,                         /* type */
-                          GL_FALSE,                         /* normalized? */
-                          sizeof(GLfloat)*2,                /* stride */
-                          (void*)0                          /* array buffer offset */
-                          );
-    glEnableVertexAttribArray(position);
-    CHECK_ERROR();    
-
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, element_buffer);
-    glDrawElements(GL_TRIANGLE_STRIP,  /* mode */
-                   4,                  /* count */
-                   GL_UNSIGNED_SHORT,  /* type */
-                   (void*)0            /* element array buffer offset */
-                   );
-    
-    glDisableVertexAttribArray(position);
-    
-    glFinish();
-    
-    // copy back texture
-    float *img = empty_image(w, h, 3, 1);
-    // void glGetTexImage(GLenum  target,
-    //		   GLint  level,
-    //		   GLenum  format,
-    //		   GLenum  type,
-    //		   GLvoid *  img);
-    CHECK_ERROR();
-    glBindTexture(GL_TEXTURE_RECTANGLE, output_texture);
-    glGetTexImage(GL_TEXTURE_RECTANGLE, 0, GL_RGB, GL_FLOAT, (void *) img);
-    glFlush();
-    glFinish();
-    CHECK_ERROR();
-    
-    for (int y = 0; y < h; y++) {
-        for (int x = 0; x < w; x++) {
-            for (int c = 0; c < 3; c++) {
-                int idx = y*w*3 + x*3 + c;
-                float tex_val = ((float *) data)[idx];
-                float ref = fade_factor_val*tex_val*tex_val;
-                float result = ((float *) img)[idx];
-                if (ref != result) {
-                    printf("mismatch at (%d, %d, %d), ref: %f  result: %f\n",
-                           x, y, c, ref, result);
-                }
-            }
-        }
-    }
-
-    printf("success!\n");
-    free(img);
-    
-    // clean up
-    // glDeleteFramebuffers(1, &input_framebuffer);
-    glDeleteFramebuffers(1, &output_framebuffer);
-    glDeleteTextures(1, &input_texture);
-    glDeleteTextures(1, &output_texture);
-
-    // suppresses compiler warnings
-    return 0;
-}
-
 
 // -------------------------- END OPENGL CODE ---------------------------------//
 
@@ -595,13 +246,11 @@ WEAK void halide_dev_malloc(buffer_t* buf) {
     // we don't actually allocate memory here - we just get a name for the texture
     SAY_HI();
     if (buf->dev) {
-        printf("uhoh\n");
         return;
     }
 
     // generate texture object name
     GLuint texture;
-    // void glGenTextures(GLsizei  n, GLuint *  textures);
     glGenTextures(1, &texture);
     CHECK_ERROR();
 
@@ -616,26 +265,24 @@ WEAK void halide_dev_malloc(buffer_t* buf) {
     glTexParameteri(GL_TEXTURE_RECTANGLE, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     CHECK_ERROR();
 
-    printf("made new texture: %d\n", (int) buf->dev);
     int w = buf->extent[0];
     int h = buf->extent[1];
     // for now constrain buffer to have 3 color channels
     assert(buf->extent[2] == 3);
     assert(buf->extent[3] == 1);
+    // TODO: vary format depending on 3rd dimension
     GLenum format = GL_RGB;
     GLenum type = GL_FLOAT;
     GLint internal_format = GL_RGB32F;
     glTexImage2D(GL_TEXTURE_RECTANGLE, 0, internal_format, w, h,
                  0, format, type, NULL);
-
     buf->dev = texture;
-
+    // clean up
     glBindTexture(GL_TEXTURE_RECTANGLE, 0);
     CHECK_ERROR();
 }
 
 // Used to generate correct timings when tracing
-// If all went well with OpenGl, this won't die
 WEAK void halide_dev_sync() {  
     SAY_HI();
     // glFinish does not return until the effects of all previously called GL commands are complete.
@@ -645,9 +292,7 @@ WEAK void halide_dev_sync() {
 }
 
 WEAK void halide_copy_to_dev(buffer_t* buf) {
-    // should copy pixels from cpu memory to texture
     SAY_HI();
-
     if(buf->host_dirty) {
         printf("copying texture %d to device\n", (int) buf->dev);
         int w = buf->extent[0];
@@ -700,10 +345,7 @@ WEAK void halide_init_kernels(const char* src) {
             fprintf(stderr, "OpenGL 4.0 not available\n");
         }
         // make our framebuffer
-        printf("framebuffer %d\n", __framebuffer);
         glGenFramebuffers(1, &__framebuffer);
-        check_framebuffer_status(GL_FRAMEBUFFER);
-        printf("framebuffer %d\n", __framebuffer);
         CHECK_ERROR();
         glBindFramebuffer(GL_FRAMEBUFFER, __framebuffer);
         glDisable(GL_CULL_FACE);
@@ -741,23 +383,21 @@ WEAK void halide_dev_run(
     int blocksX, int blocksY, int blocksZ,
     int threadsX, int threadsY, int threadsZ,
     int shared_mem_bytes,
+    char* arg_names[],
     size_t arg_sizes[],
     void* args[])
 {
     SAY_HI();
-
     // attach output texture to framebuffer
     GLuint input_texture = * (GLuint *) args[0];
     GLuint output_texture = * (GLuint *) args[1];
-    printf("output_texture is %d\n", output_texture);
     glBindTexture(GL_TEXTURE_RECTANGLE, output_texture);
-    CHECK_ERROR();
     glBindFramebuffer(GL_FRAMEBUFFER, __framebuffer);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
                            GL_TEXTURE_RECTANGLE, output_texture, 0);
+    glBindTexture(GL_TEXTURE_RECTANGLE, 0);
     CHECK_ERROR();
     check_framebuffer_status(GL_FRAMEBUFFER);
-
     // set the viewport to the size of the output
     const GLenum bufs[] = {GL_COLOR_ATTACHMENT0};
     CHECK_ERROR();
@@ -765,37 +405,75 @@ WEAK void halide_dev_run(
     // of the current framebuffer. n may range from 0 to the value of GL_MAX_COLOR_ATTACHMENTS.
     glDrawBuffers(1, bufs);
     CHECK_ERROR();
-    
     // render into entire framebuffer
     glViewport(0, 0, threadsX, threadsY);
     CHECK_ERROR();
     // fetch the program
     GLuint program =  __gl_programs[entry_name];
     glUseProgram(program);    
-
     // set args
-    GLint fade_factor = glGetUniformLocation(program, "fade_factor");
-    GLint input = glGetUniformLocation(program, "input");
-    GLint input_dim = glGetUniformLocation(program, "input_dim");
-    GLint useless = glGetUniformLocation(program, "useless");
-    
-    float fade_factor_val = 1.0;
-    glUniform1fv(fade_factor, 1, &fade_factor_val);
-    CHECK_ERROR();
-    GLint dims[] = {threadsX, threadsY};
-    glUniform2iv(input_dim, 1, dims); //(GLint) w, (GLint) h);
-    CHECK_ERROR();
-    float useless_val = 100000.0;
-    glUniform1fv(useless, 1, &useless_val);
-    glActiveTexture(GL_TEXTURE0);
-    CHECK_ERROR();
+    // first, put the input arguments into a map
+    std::map <std::string, void*> arg_map;
+    int i = 0;
+    while(arg_sizes[i]!=0) {
+        printf("arg[%d]: %s\n", i, arg_names[i]);
+        std::string str(arg_names[i]);
+        arg_map[str] = args[i];
+        ++i;
+    }
+    // explicitly add output dimensions
+    GLint output_dim = glGetUniformLocation(program, "output_dim");
+    GLint output_dim_val[] = {threadsX, threadsY};
+    arg_map["output_dim"] = (void *) output_dim_val;
+    // now add passed in arguments
+    GLint n_active_uniforms;
+    glGetProgramiv(program, GL_ACTIVE_UNIFORMS, &n_active_uniforms);
+    GLint max_uniform_length;
+    glGetProgramiv(program, GL_ACTIVE_UNIFORM_MAX_LENGTH, &max_uniform_length);
+    printf("found %d active uniforms with max name length %d\n",
+           n_active_uniforms, max_uniform_length);
+    GLint size;
+    GLenum type;
+    GLchar *name = (char*) malloc(max_uniform_length*sizeof(char));
+    for (i = 0; i < n_active_uniforms; ++i) {
+        glGetActiveUniform(program, i, max_uniform_length, NULL, &size, &type, name);
+        if (arg_map.count(name) > 0) {
+            GLint loc = glGetUniformLocation(program, name);
+            void * val = arg_map[name];
+            if (type==GL_FLOAT) {
+                printf("setting float arg %s to %f\n", name, * (float *) val);
+                glUniform1fv(loc, 1, (GLfloat *) val);
+            } else if (type==GL_INT) {
+                printf("setting int arg %s to %d\n", name, * (int *) val);
+                glUniform1iv(loc, 1, (GLint *) val);
+            } else if (type==GL_UNSIGNED_INT) {
+                printf("setting unsigned int arg %s to %d\n", name, * (unsigned int *) val);
+                glUniform1uiv(loc, 1, (GLuint *) val);
+            } else if (type==GL_SAMPLER_2D_RECT) {
+                printf("setting Sampler2DRect arg %s to %d\n", name, 0);
+                //glActiveTexture(GL_TEXTURE0);
+                // TODO: figure out what's going on here
+                glUniform1i(loc, 0);
+            } else if (type==GL_INT_VEC2) {
+                // this is probably our output dimensions
+                printf("setting int vec2 arg %s to {%d, %d}\n", name,
+                       * (int *) val, * (((int *) val) + 1));
+                glUniform2iv(output_dim, 1, output_dim_val);
+            } else {
+                printf("missing case for argument %s\n", name);
+                assert(false && "unrecognized argument type :(");
+            }
+        } else {
+            printf("missing argument %s\n", name);
+            assert(false);
+        }
+    }
+    free(name);
+
+    // this is important; it's unclear why
     glBindTexture(GL_TEXTURE_RECTANGLE, input_texture);
     CHECK_ERROR();
-    // i think the 0 matches texture 0
-    glUniform1i(input, 0);
-    
 
-    // TODO also need to set attributes
     GLint position = glGetAttribLocation(program, "position");
     glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer);
     glVertexAttribPointer(position,  /* attribute */
@@ -818,9 +496,42 @@ WEAK void halide_dev_run(
     glDisableVertexAttribArray(position);
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glBindTexture(GL_TEXTURE_RECTANGLE, 0);
 }
 
-int f(buffer_t *input, buffer_t *result ) {
+#ifdef TEST_STUB
+
+//------------------------------------ non open GL helper functions ---------------------//
+
+static float *empty_image(int dim0, int dim1, int dim2, int dim3) {
+    SAY_HI();
+    return (float *) calloc(dim0*dim1*dim2*dim3, sizeof(float));
+}
+
+static float *random_image(int dim0, int dim1, int dim2, int dim3) {
+    SAY_HI();
+    int sz = dim0*dim1*dim2*dim3;
+    float *img = (float*) malloc(sz*sizeof(float));
+    for (int i = 0; i < sz; i++) {
+        img[i] = rand();
+    }
+    return img;
+}
+
+const char* fragment_shader_src = \
+"#version 410                                    \n"\
+"uniform sampler2DRect input;                    \n"\
+"uniform float fade_factor;                      \n"\
+"uniform float useless;                          \n"\
+"in vec2 pixcoord;                               \n"\
+"out vec4 output;                                \n"\
+"void main()                                     \n"\
+"{                                               \n"\
+"    vec4 tex_val = texture(input, pixcoord);    \n"\
+"    output = fade_factor*tex_val*tex_val;       \n"\
+"}                                               \n\0";
+
+int f(buffer_t *input, buffer_t *result, float fade_factor ) {
     SAY_HI();
     const char* entry_name = "knl";
 
@@ -832,17 +543,19 @@ int f(buffer_t *input, buffer_t *result ) {
     int blocksZ = 1; // don't care
     int shared_mem_bytes = 0; // don't care
 
-    // Invoke
-    // also doesn't matter?
+    char* arg_names[4];
+    arg_names[0] = "input";
+    arg_names[1] = "output";
+    arg_names[2] = "fade_factor";
     size_t argSizes[] = { 1, 1, 1, 0};
-    // matters - maybe make this an array of structs?
-    void* args[] = { &input->dev, &result->dev, NULL, 0 };
+    void* args[] = { &input->dev, &result->dev, &fade_factor, 0 };
 
     halide_dev_run(
                    entry_name,
                    blocksX,  blocksY,  blocksZ,
                    threadsX, threadsY, threadsZ,
                    shared_mem_bytes,
+                   arg_names,
                    argSizes,
                    args
                    );
@@ -854,7 +567,6 @@ int f(buffer_t *input, buffer_t *result ) {
 int main(int argc, char* argv[]) {
     SAY_HI();
     printf("hello world!\n");
-#if 1
     halide_init_kernels(fragment_shader_src);
 
     int W = 100, H = 200, C = 3;
@@ -877,30 +589,29 @@ int main(int argc, char* argv[]) {
     halide_dev_malloc(&out);
     halide_copy_to_dev(&in);
 
-    f(&in, &out);
+    float fade_factor = 2.0;
+    f(&in, &out, fade_factor);
 
     out.dev_dirty = true;
     halide_copy_to_host(&out);
-    float fade_factor_val = 1.0;
     for (int y = 0; y < H; y++) {
         for (int x = 0; x < W; x++) {
             for (int c = 0; c < 3; c++) {
                 int idx = y*W*3 + x*3 + c;
                 float tex_val = ((float *) in.host)[idx];
-                float ref = fade_factor_val*tex_val*tex_val;
+                float ref = fade_factor*tex_val*tex_val;
                 float result = ((float *) out.host)[idx];
                 if (ref != result) {
                     printf("mismatch at (%d, %d, %d), ref: %f  result: %f\n",
                            x, y, c, ref, result);
+                    return -1;
                 }
             }
         }
     }
-    printf("all good!\n");
-#else
-    main_old(0, NULL);
-#endif
+    printf("success!\n");
+    return 0;
 }
 
-// } // extern C linkage
+#endif // TEST_STUB
 
