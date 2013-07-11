@@ -68,6 +68,10 @@ gcc -o test-gl runtime.opengl_host.o -L/usr/lib -lGL -lglut -lGLEW -lm
 
 // ----------------------------------- global state -------------------------------------//
 
+// for parsing shader source
+#define KNL_DELIMITER "#version"
+#define KNL_NAME_DELIMITER "//"
+
 // map from kernel name to OpenGL program object reference
 static std::map<std::string, GLuint> __gl_programs;
 
@@ -364,14 +368,35 @@ WEAK void halide_init_kernels(const char* src) {
         vertex_shader = make_shader(GL_VERTEX_SHADER, vertex_shader_src, NULL);
         CHECK_ERROR();
         // now make fragment shader(s) from src
-        GLuint fragment_shader = make_shader(GL_FRAGMENT_SHADER, src, NULL);
-        const std::string knl_name = "knl";
-        printf("making fragment shader named %s with src:\n%s\n--------\n",
-               knl_name.c_str(), src);
-        // now make program
-        GLuint program = make_program(vertex_shader, fragment_shader);
-        __gl_programs[knl_name] = program;
-        CHECK_ERROR();
+        std::string src_str = src;
+        size_t start_pos = src_str.find(KNL_DELIMITER); // start at first instance
+        size_t end_pos = std::string::npos;
+        std::string knl;
+        std::string knl_name;
+        std::string knl_name_delimiter = KNL_NAME_DELIMITER;
+        while(true) {
+            end_pos = src_str.find(KNL_DELIMITER, start_pos+1);
+            printf("start %lu end %lu\n", start_pos, end_pos);
+            knl = src_str.substr(start_pos, end_pos - start_pos);
+
+            size_t knl_name_start = knl.find(knl_name_delimiter) 
+                + knl_name_delimiter.length();
+            size_t knl_name_end = knl.find(knl_name_delimiter, knl_name_start);
+            knl_name = knl.substr(knl_name_start, knl_name_end - knl_name_start);
+            printf("making fragment shader named %s with src:\n---------\n%s\n--------\n",
+                   knl_name.c_str(), src);
+            GLuint fragment_shader = make_shader(GL_FRAGMENT_SHADER, knl.c_str(), NULL);
+            // now make program
+            GLuint program = make_program(vertex_shader, fragment_shader);
+            __gl_programs[knl_name] = program;
+            CHECK_ERROR();
+
+            if (end_pos == std::string::npos) {
+                break;
+            } else { // moar kernelz
+                start_pos = end_pos;
+            }
+        }
         printf("kernel initialization success!\n");
     }
     // mark as initialized
@@ -389,6 +414,7 @@ WEAK void halide_dev_run(
 {
     SAY_HI();
     // attach output texture to framebuffer
+    // TODO: we can't assume that this is our output
     GLuint input_texture = * (GLuint *) args[0];
     GLuint output_texture = * (GLuint *) args[1];
     glBindTexture(GL_TEXTURE_RECTANGLE, output_texture);
@@ -398,19 +424,17 @@ WEAK void halide_dev_run(
     glBindTexture(GL_TEXTURE_RECTANGLE, 0);
     CHECK_ERROR();
     check_framebuffer_status(GL_FRAMEBUFFER);
-    // set the viewport to the size of the output
-    const GLenum bufs[] = {GL_COLOR_ATTACHMENT0};
-    CHECK_ERROR();
     // The fragment shader output value is written into the nth color attachment
     // of the current framebuffer. n may range from 0 to the value of GL_MAX_COLOR_ATTACHMENTS.
+    const GLenum bufs[] = {GL_COLOR_ATTACHMENT0};
     glDrawBuffers(1, bufs);
     CHECK_ERROR();
-    // render into entire framebuffer
+    // set the viewport to the size of the output
     glViewport(0, 0, threadsX, threadsY);
     CHECK_ERROR();
     // fetch the program
     GLuint program =  __gl_programs[entry_name];
-    glUseProgram(program);    
+    glUseProgram(program);
     // set args
     // first, put the input arguments into a map
     std::map <std::string, void*> arg_map;
@@ -432,6 +456,9 @@ WEAK void halide_dev_run(
     glGetProgramiv(program, GL_ACTIVE_UNIFORM_MAX_LENGTH, &max_uniform_length);
     printf("found %d active uniforms with max name length %d\n",
            n_active_uniforms, max_uniform_length);
+    // keep track of active texture in case we have to bind multiple input textures
+    int num_active_textures = 0;
+    // allocate variables to store result of glGetActiveUniform
     GLint size;
     GLenum type;
     GLchar *name = (char*) malloc(max_uniform_length*sizeof(char));
@@ -450,10 +477,15 @@ WEAK void halide_dev_run(
                 printf("setting unsigned int arg %s to %d\n", name, * (unsigned int *) val);
                 glUniform1uiv(loc, 1, (GLuint *) val);
             } else if (type==GL_SAMPLER_2D_RECT) {
-                printf("setting Sampler2DRect arg %s to %d\n", name, 0);
-                //glActiveTexture(GL_TEXTURE0);
-                // TODO: figure out what's going on here
-                glUniform1i(loc, 0);
+                printf("setting Sampler2DRect arg %s to %d\n", name, num_active_textures);
+                // set active texture
+                glActiveTexture(GL_TEXTURE0 + num_active_textures);
+                // now this binds to active texture
+                glBindTexture(GL_TEXTURE_RECTANGLE, * (GLuint *) val);
+                glUniform1i(loc, num_active_textures);
+                // increment so that if we have more textures
+                // we bind to different active textures
+                num_active_textures++;
             } else if (type==GL_INT_VEC2) {
                 // this is probably our output dimensions
                 printf("setting int vec2 arg %s to {%d, %d}\n", name,
@@ -469,10 +501,6 @@ WEAK void halide_dev_run(
         }
     }
     free(name);
-
-    // this is important; it's unclear why
-    glBindTexture(GL_TEXTURE_RECTANGLE, input_texture);
-    CHECK_ERROR();
 
     GLint position = glGetAttribLocation(program, "position");
     glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer);
@@ -494,14 +522,17 @@ WEAK void halide_dev_run(
                    );
     
     glDisableVertexAttribArray(position);
-
+    while(num_active_textures > 0) {
+        num_active_textures--;
+        glActiveTexture(GL_TEXTURE0 + num_active_textures);
+        glBindTexture(GL_TEXTURE_RECTANGLE, 0);
+    }
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glBindTexture(GL_TEXTURE_RECTANGLE, 0);
 }
 
 #ifdef TEST_STUB
 
-//------------------------------------ non open GL helper functions ---------------------//
+//------------------------------------ helper functions ----------------------------//
 
 static float *empty_image(int dim0, int dim1, int dim2, int dim3) {
     SAY_HI();
@@ -520,6 +551,7 @@ static float *random_image(int dim0, int dim1, int dim2, int dim3) {
 
 const char* fragment_shader_src = \
 "#version 410                                    \n"\
+"//knl//                                         \n"\
 "uniform sampler2DRect input;                    \n"\
 "uniform float fade_factor;                      \n"\
 "uniform float useless;                          \n"\
@@ -529,7 +561,19 @@ const char* fragment_shader_src = \
 "{                                               \n"\
 "    vec4 tex_val = texture(input, pixcoord);    \n"\
 "    output = fade_factor*tex_val*tex_val;       \n"\
-"}                                               \n\0";
+"}                                               \n"\
+"#version 410                                    \n"\
+"//knl2//                                        \n"\
+"uniform sampler2DRect input;                    \n"\
+"uniform float fade_factor;                      \n"\
+"uniform float useless;                          \n"\
+"in vec2 pixcoord;                               \n"\
+"out vec4 output;                                \n"\
+"void main()                                     \n"\
+"{                                               \n"\
+"    vec4 tex_val = texture(input, pixcoord);    \n"\
+"    output = fade_factor*tex_val*tex_val;       \n"\
+"}                                               \n";
 
 int f(buffer_t *input, buffer_t *result, float fade_factor ) {
     SAY_HI();
@@ -563,7 +607,6 @@ int f(buffer_t *input, buffer_t *result, float fade_factor ) {
     return 0;
 }
 
-// this should probably also be the same as the openCL version
 int main(int argc, char* argv[]) {
     SAY_HI();
     printf("hello world!\n");
@@ -614,4 +657,3 @@ int main(int argc, char* argv[]) {
 }
 
 #endif // TEST_STUB
-
