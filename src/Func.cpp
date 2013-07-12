@@ -848,6 +848,8 @@ void define_base_case(Internal::Function func, const vector<Expr> &a, Expr e) {
     for (size_t i = 0; i < a.size(); i++) {
         if (const Variable *v = a[i].as<Variable>()) {
             if (!v->param.defined()) pure_args[i] = Var(v->name);
+        } else {
+            pure_args[i] = Var();
         }
     }
 
