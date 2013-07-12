@@ -1,6 +1,7 @@
 #include "CodeGen_GPU_Host.h"
 #include "CodeGen_PTX_Dev.h"
 #include "CodeGen_OpenCL_Dev.h"
+#include "CodeGen_OpenGL_Dev.h"
 #include "IROperator.h"
 #include <iostream>
 #include "buffer_t.h"
@@ -29,6 +30,9 @@ static int halide_internal_initmod_ptx_host_length = 0;
 
 extern "C" unsigned char halide_internal_initmod_opencl_host[];
 extern "C" int halide_internal_initmod_opencl_host_length;
+
+extern "C" unsigned char halide_internal_initmod_opengl_host[];
+extern "C" int halide_internal_initmod_opengl_host_length;
 
 namespace Halide {
 namespace Internal {
@@ -298,6 +302,10 @@ CodeGen_GPU_Host::CodeGen_GPU_Host(uint32_t options) :
     } else if (options & GPU_OpenCL) {
         initmod = halide_internal_initmod_opencl_host;
         initmod_length = halide_internal_initmod_opencl_host_length;
+    } else if (options & GPU_OpenGL) {
+        debug(0) << "I didn't know what to do here, in CodeGen_GPU_Host.cpp line 302\n";
+        initmod = halide_internal_initmod_opengl_host;
+        initmod_length = halide_internal_initmod_opengl_host_length;
     }
 }
 
@@ -310,8 +318,8 @@ CodeGen_GPU_Dev* CodeGen_GPU_Host::make_dev(uint32_t options)
         debug(0) << "Constructing OpenCL device codegen\n";
         return new CodeGen_OpenCL_Dev();
     } else {
-        assert(false && "Requested unknown GPU target");
-        return NULL;
+        debug(0) << "Constructing OpenGL device codegen\n";
+        return new CodeGen_OpenGL_Dev();
     }
 }
 
@@ -446,6 +454,11 @@ void CodeGen_GPU_Host::jit_init(ExecutionEngine *ee, Module *module) {
             }
             assert(error.empty() && "Could not find libopencl.so, OpenCL.framework, or opencl.dll");
         }
+    } else if (options & GPU_OpenGL) {
+        debug(0) << "crap\n";
+        assert(false && "crap");
+    } else {
+        assert(false && "uhoh");
     }
 }
 

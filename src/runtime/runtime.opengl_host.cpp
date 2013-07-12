@@ -17,7 +17,7 @@ gcc -o test-gl runtime.opengl_host.o -L/usr/lib -lGL -lglut -lGLEW -lm
 // The PTX host extends the x86 target
 // But compilation fails with these, and I don't know what they do,
 // so let's ignore for now
-#if 0
+//#if 0
 #include "posix_allocator.cpp"
 #include "posix_clock.cpp"
 #include "posix_error_handler.cpp"
@@ -33,7 +33,7 @@ gcc -o test-gl runtime.opengl_host.o -L/usr/lib -lGL -lglut -lGLEW -lm
 #include "posix_thread_pool.cpp"
 #endif
 #endif
-#endif
+//#endif
 
 #include <GL/glew.h>
 
@@ -278,6 +278,9 @@ WEAK void halide_dev_malloc(buffer_t* buf) {
     GLenum format = GL_RGB;
     GLenum type = GL_FLOAT;
     GLint internal_format = GL_RGB32F;
+    // this actually allocates the space
+    // the space will be used as long as subsequent calls
+    // to glTexImage2D have the same fmt and dimensions
     glTexImage2D(GL_TEXTURE_RECTANGLE, 0, internal_format, w, h,
                  0, format, type, NULL);
     buf->dev = texture;
@@ -414,92 +417,7 @@ WEAK void halide_dev_run(
 {
     SAY_HI();
     // attach output texture to framebuffer
-    // TODO: we can't assume that this is our output
-    GLuint input_texture = * (GLuint *) args[0];
-    GLuint output_texture = * (GLuint *) args[1];
-    glBindTexture(GL_TEXTURE_RECTANGLE, output_texture);
-    glBindFramebuffer(GL_FRAMEBUFFER, __framebuffer);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                           GL_TEXTURE_RECTANGLE, output_texture, 0);
-    glBindTexture(GL_TEXTURE_RECTANGLE, 0);
-    CHECK_ERROR();
-    check_framebuffer_status(GL_FRAMEBUFFER);
-    // The fragment shader output value is written into the nth color attachment
-    // of the current framebuffer. n may range from 0 to the value of GL_MAX_COLOR_ATTACHMENTS.
-    const GLenum bufs[] = {GL_COLOR_ATTACHMENT0};
-    glDrawBuffers(1, bufs);
-    CHECK_ERROR();
-    // set the viewport to the size of the output
-    glViewport(0, 0, threadsX, threadsY);
-    CHECK_ERROR();
-    // fetch the program
-    GLuint program =  __gl_programs[entry_name];
-    glUseProgram(program);
-    // set args
-    // first, put the input arguments into a map
-    std::map <std::string, void*> arg_map;
-    int i = 0;
-    while(arg_sizes[i]!=0) {
-        printf("arg[%d]: %s\n", i, arg_names[i]);
-        std::string str(arg_names[i]);
-        arg_map[str] = args[i];
-        ++i;
-    }
-    // explicitly add output dimensions
-    GLint output_dim = glGetUniformLocation(program, "output_dim");
-    GLint output_dim_val[] = {threadsX, threadsY};
-    arg_map["output_dim"] = (void *) output_dim_val;
-    // now add passed in arguments
-    GLint n_active_uniforms;
-    glGetProgramiv(program, GL_ACTIVE_UNIFORMS, &n_active_uniforms);
-    GLint max_uniform_length;
-    glGetProgramiv(program, GL_ACTIVE_UNIFORM_MAX_LENGTH, &max_uniform_length);
-    printf("found %d active uniforms with max name length %d\n",
-           n_active_uniforms, max_uniform_length);
-    // keep track of active texture in case we have to bind multiple input textures
-    int num_active_textures = 0;
-    // allocate variables to store result of glGetActiveUniform
-    GLint size;
-    GLenum type;
-    GLchar *name = (char*) malloc(max_uniform_length*sizeof(char));
-    for (i = 0; i < n_active_uniforms; ++i) {
-        glGetActiveUniform(program, i, max_uniform_length, NULL, &size, &type, name);
-        if (arg_map.count(name) > 0) {
-            GLint loc = glGetUniformLocation(program, name);
-            void * val = arg_map[name];
-            if (type==GL_FLOAT) {
-                printf("setting float arg %s to %f\n", name, * (float *) val);
-                glUniform1fv(loc, 1, (GLfloat *) val);
-            } else if (type==GL_INT) {
-                printf("setting int arg %s to %d\n", name, * (int *) val);
-                glUniform1iv(loc, 1, (GLint *) val);
-            } else if (type==GL_UNSIGNED_INT) {
-                printf("setting unsigned int arg %s to %d\n", name, * (unsigned int *) val);
-                glUniform1uiv(loc, 1, (GLuint *) val);
-            } else if (type==GL_SAMPLER_2D_RECT) {
-                printf("setting Sampler2DRect arg %s to %d\n", name, num_active_textures);
-                // set active texture
-                glActiveTexture(GL_TEXTURE0 + num_active_textures);
-                // now this binds to active texture
-                glBindTexture(GL_TEXTURE_RECTANGLE, * (GLuint *) val);
-                glUniform1i(loc, num_active_textures);
-                // increment so that if we have more textures
-                // we bind to different active textures
-                num_active_textures++;
-            } else if (type==GL_INT_VEC2) {
-                // this is probably our output dimensions
-                printf("setting int vec2 arg %s to {%d, %d}\n", name,
-                       * (int *) val, * (((int *) val) + 1));
-                glUniform2iv(output_dim, 1, output_dim_val);
-            } else {
-                printf("missing case for argument %s\n", name);
-                assert(false && "unrecognized argument type :(");
-            }
-        } else {
-            printf("missing argument %s\n", name);
-            assert(false);
-        }
-    }
+    // TODO: we can't assume that this is our output    }
     free(name);
 
     GLint position = glGetAttribLocation(program, "position");
