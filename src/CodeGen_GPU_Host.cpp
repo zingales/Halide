@@ -461,7 +461,6 @@ void CodeGen_GPU_Host::jit_init(ExecutionEngine *ee, Module *module) {
             assert(error.empty() && "Could not find libopencl.so, OpenCL.framework, or opencl.dll");
         }
     } else if (options & GPU_OpenGL) {
-        debug(0) << "crap we should be linking libraries \n";
         debug(0) << "TODO: cache results of linking OpenGL lib\n";
 
         // First check if libCuda has already been linked
@@ -509,6 +508,8 @@ void CodeGen_GPU_Host::jit_finalize(ExecutionEngine *ee, Module *module, vector<
         cleanup_routines->push_back(cleanup_routine);
     } else if (options & GPU_OpenCL) {
         debug(0) << "TODO: set cleanup for OpenCL\n";
+    } else if (options & GPU_OpenGL) {
+        debug(0) << "TODO: set cleanup for OpenGL\n";
     }
 }
 
@@ -603,7 +604,9 @@ void CodeGen_GPU_Host::visit(const For *loop) {
         Value *gpu_arg_sizes_arr = builder->CreateAlloca(ArrayType::get(i64, num_args+1), // NULL-terminated list of size_t's
                                                          NULL,
                                                          kernel_name + "_arg_sizes");
-
+        Value *gpu_arg_names_arr = builder->CreateAlloca(ArrayType::get(arg_t, num_args+1),
+                                                         NULL,
+                                                         kernel_name + "arg_names");
         for (int i = 0; i < num_args; i++) {
             // get the closure argument
             string name = closure_args[i].name;
@@ -651,6 +654,7 @@ void CodeGen_GPU_Host::visit(const For *loop) {
             codegen(n_blkid_x), codegen(n_blkid_y), codegen(n_blkid_z),
             codegen(n_tid_x), codegen(n_tid_y), codegen(n_tid_z),
             shared_mem_size,
+            builder->CreateConstGEP2_32(gpu_arg_names_arr, 0, 0, "gpu_arg_names_ar_ref"),
             builder->CreateConstGEP2_32(gpu_arg_sizes_arr, 0, 0, "gpu_arg_sizes_ar_ref"),
             builder->CreateConstGEP2_32(gpu_args_arr, 0, 0, "gpu_args_arr_ref")
         };
