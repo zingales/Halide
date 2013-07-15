@@ -43,6 +43,8 @@ protected:
         std::string print_type(Type type);
         
         void visit(const For *);
+        void visit(const Load *);
+        void visit(const Store *);
     };
     
     CodeGen_OpenGL_C *clc;

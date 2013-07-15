@@ -633,16 +633,24 @@ void CodeGen_GPU_Host::visit(const For *loop) {
                                  builder->CreateConstGEP2_32(gpu_args_arr, 0, i));
 
             // store the size of the argument
-            // TODO: support non-64-bit hosts for CUDA, OpenCL
+            // TODO: support non-64-bit hosts for CUDA, OpenCL, OpenGL
             int size_bits = (closure_args[i].is_buffer) ? 64 : closure_args[i].type.bits;
             builder->CreateStore(ConstantInt::get(i64, size_bits/8),
                                  builder->CreateConstGEP2_32(gpu_arg_sizes_arr, 0, i));
+
+            // store the name of the argument
+            string arg_name_ref_str = kernel_name + "_" + name + "_ref";
+            Value *arg_name_str = builder->CreateGlobalStringPtr(name, arg_name_ref_str);
+            builder->CreateStore(arg_name_str,
+                                 builder->CreateConstGEP2_32(gpu_arg_names_arr, 0, i));
         }
         // NULL-terminate the lists
         builder->CreateStore(ConstantPointerNull::get(arg_t),
                              builder->CreateConstGEP2_32(gpu_args_arr, 0, num_args));
         builder->CreateStore(ConstantInt::get(i64, 0),
                              builder->CreateConstGEP2_32(gpu_arg_sizes_arr, 0, num_args));
+        builder->CreateStore(ConstantPointerNull::get(arg_t),
+                             builder->CreateConstGEP2_32(gpu_arg_names_arr, 0, num_args));
 
         // Figure out how much shared memory we need to allocate, and
         // build offsets into it for the internal allocations
@@ -656,7 +664,7 @@ void CodeGen_GPU_Host::visit(const For *loop) {
             shared_mem_size,
             builder->CreateConstGEP2_32(gpu_arg_names_arr, 0, 0, "gpu_arg_names_ar_ref"),
             builder->CreateConstGEP2_32(gpu_arg_sizes_arr, 0, 0, "gpu_arg_sizes_ar_ref"),
-            builder->CreateConstGEP2_32(gpu_args_arr, 0, 0, "gpu_args_arr_ref")
+            builder->CreateConstGEP2_32(gpu_args_arr, 0, 0, "gpu_args_ar_ref")
         };
         builder->CreateCall(dev_run_fn, launch_args);
 
