@@ -31,12 +31,6 @@
 #  include <GL/glut.h>
 #endif
 
-#ifdef __APPLE__
-#include <OpenCL/cl.h>
-#else
-#include <CL/cl.h>
-#endif
-
 #define WEAK __attribute__((weak))
 
 extern "C" {
@@ -65,7 +59,7 @@ extern "C" {
 extern "C" {
 
 //apparently this is important
-void *__dso_handle;
+WEAK void *__dso_handle;
 
 // for parsing shader source
 #define KNL_DELIMITER "#version"
@@ -215,15 +209,6 @@ static GLuint make_program(GLuint vertex_shader, GLuint fragment_shader)
 }
 
 // -------------------------- END OPENGL CODE ---------------------------------//
-
-
-
-
-cl_context WEAK cl_ctx = 0;
-cl_command_queue WEAK cl_q = 0;
-
-static cl_program __mod;
-// static CUevent __start, __end;
 
 // Used to create buffer_ts to track internal allocations caused by our runtime
 // TODO: add checks specific to the sorts of images that OpenGL can handle
@@ -383,35 +368,41 @@ WEAK void halide_init_kernels(const char* src) {
         CHECK_ERROR();
         // now make fragment shader(s) from src
         std::string src_str = src;
-        size_t start_pos = src_str.find(KNL_DELIMITER); // start at first instance
-        size_t end_pos = std::string::npos;
-        std::string knl;
-        std::string knl_name;
-        std::string knl_name_delimiter = KNL_NAME_DELIMITER;
-        while(true) {
-            end_pos = src_str.find(KNL_DELIMITER, start_pos+1);
-            printf("start %lu end %lu\n", start_pos, end_pos);
-            knl = src_str.substr(start_pos, end_pos - start_pos);
-
-            size_t knl_name_start = knl.find(knl_name_delimiter) 
-                + knl_name_delimiter.length();
-            size_t knl_name_end = knl.find(knl_name_delimiter, knl_name_start);
-            knl_name = knl.substr(knl_name_start, knl_name_end - knl_name_start);
-            printf("making fragment shader named %s with src:\n---------\n%s\n--------\n",
-                   knl_name.c_str(), knl.c_str());
-            GLuint fragment_shader = make_shader(GL_FRAGMENT_SHADER, knl.c_str(), NULL);
-            // now make program
-            GLuint program = make_program(vertex_shader, fragment_shader);
-            __gl_programs[knl_name] = program;
-            CHECK_ERROR();
-
-            if (end_pos == std::string::npos) {
-                break;
-            } else { // moar kernelz
-                start_pos = end_pos;
+        if (src_str.length() > 0) {
+            size_t start_pos = src_str.find(KNL_DELIMITER); // start at first instance
+            size_t end_pos = std::string::npos;
+            std::string knl;
+            std::string knl_name;
+            std::string knl_name_delimiter = KNL_NAME_DELIMITER;
+            while(true) {
+                end_pos = src_str.find(KNL_DELIMITER, start_pos+1);
+                printf("start %lu end %lu\n", start_pos, end_pos);
+                if (start_pos >= end_pos) {
+                    printf("bailing out and dumping source:\n%s\n", src);
+                    assert(false && "source is missing #version delimiter");
+                }
+                knl = src_str.substr(start_pos, end_pos - start_pos);
+                
+                size_t knl_name_start = knl.find(knl_name_delimiter) 
+                    + knl_name_delimiter.length();
+                size_t knl_name_end = knl.find(knl_name_delimiter, knl_name_start);
+                knl_name = knl.substr(knl_name_start, knl_name_end - knl_name_start);
+                printf("making fragment shader named %s with src:\n---------\n%s\n--------\n",
+                       knl_name.c_str(), knl.c_str());
+                GLuint fragment_shader = make_shader(GL_FRAGMENT_SHADER, knl.c_str(), NULL);
+                // now make program
+                GLuint program = make_program(vertex_shader, fragment_shader);
+                __gl_programs[knl_name] = program;
+                CHECK_ERROR();
+                
+                if (end_pos == std::string::npos) {
+                    break;
+                } else { // moar kernelz
+                    start_pos = end_pos;
+                }
             }
         }
-        printf("kernel initialization success!\n");
+        printf("kernel initialization success! src string lengeth was %ld\n", src_str.length());
     }
     // mark as initialized
     __initialized = true;
@@ -545,91 +536,131 @@ WEAK void halide_dev_run(
 }
 
 #ifdef TEST_STUB
-const char* src = "                                               \n"\
-"__kernel void knl(                                                       \n" \
-"   __global float* input,                                              \n" \
-"   __global float* output,                                             \n" \
-"   const unsigned int count,                                           \n" \
-"   __local uchar* shared)                                            \n" \
-"{                                                                      \n" \
-"   int i = get_global_id(0);                                           \n" \
-"   if(i < count)                                                       \n" \
-"       output[i] = input[i] * input[i];                                \n" \
-"}                                                                      \n";
 
-int f( buffer_t *input, buffer_t *result, int N )
-{
-    const char* entry_name = "knl";
+    //------------------------------------ helper functions ----------------------------//
 
-    int threadsX = 128;
-    int threadsY =  1;
-    int threadsZ =  1;
-    int blocksX = N / threadsX;
-    int blocksY = 1;
-    int blocksZ = 1;
-
-
-    threadsX = 8;
-    threadsY =  1;
-    threadsZ =  1;
-    blocksX = 4;
-    blocksY = 4;
-    blocksZ = 1;
-
-    // Invoke
-    size_t argSizes[] = { sizeof(cl_mem), sizeof(cl_mem), sizeof(int), 0 };
-    void* args[] = { &input->dev, &result->dev, &N, 0 };
-    halide_dev_run(
-        entry_name,
-        blocksX,  blocksY,  blocksZ,
-        threadsX, threadsY, threadsZ,
-        1, // sharedMemBytes
-        argSizes,
-        args
-    );
-
-    return 0;
-}
-
-int main(int argc, char* argv[]) {
-    halide_init_kernels(src);
-
-    const int N = 2048;
-    buffer_t in, out;
-
-    in.dev = 0;
-    in.host = (uint8_t*)malloc(N*sizeof(float));
-    in.elem_size = sizeof(float);
-    in.extent[0] = N; in.extent[1] = 1; in.extent[2] = 1; in.extent[3] = 1;
-
-    out.dev = 0;
-    out.host = (uint8_t*)malloc(N*sizeof(float));
-    out.elem_size = sizeof(float);
-    out.extent[0] = N; out.extent[1] = 1; out.extent[2] = 1; out.extent[3] = 1;
-
-    for (int i = 0; i < N; i++) {
-        ((float*)in.host)[i] = i / 2.0;
+    static float *empty_image(int dim0, int dim1, int dim2, int dim3) {
+        SAY_HI();
+        return (float *) calloc(dim0*dim1*dim2*dim3, sizeof(float));
     }
-    in.host_dirty = true;
 
-    halide_dev_malloc(&in);
-    halide_dev_malloc(&out);
-    halide_copy_to_dev(&in);
-
-    f( &in, &out, N );
-
-    out.dev_dirty = true;
-    halide_copy_to_host(&out);
-
-    for (int i = 0; i < N; i++) {
-        float a = ((float*)in.host)[i];
-        float b = ((float*)out.host)[i];
-        if (b != a*a) {
-            printf("[%d] %f != %f^2\n", i, b, a);
+    static float *random_image(int dim0, int dim1, int dim2, int dim3) {
+        SAY_HI();
+        int sz = dim0*dim1*dim2*dim3;
+        float *img = (float*) malloc(sz*sizeof(float));
+        for (int i = 0; i < sz; i++) {
+            img[i] = rand();
         }
+        return img;
     }
-}
 
-#endif
+const char* fragment_shader_src = \
+"#version 410                                    \n"\
+"//knl//                                         \n"\
+"uniform sampler2DRect input;                    \n"\
+"uniform float fade_factor;                      \n"\
+"uniform float useless;                          \n"\
+"in vec2 pixcoord;                               \n"\
+"out vec4 output;                                \n"\
+"void main()                                     \n"\
+"{                                               \n"\
+"    vec4 tex_val = texture(input, pixcoord);    \n"\
+"    output = fade_factor*tex_val*tex_val;       \n"\
+"}                                               \n"\
+"#version 410                                    \n"\
+"//knl2//                                        \n"\
+"uniform sampler2DRect input;                    \n"\
+"uniform float fade_factor;                      \n"\
+"uniform float useless;                          \n"\
+"in vec2 pixcoord;                               \n"\
+"out vec4 output;                                \n"\
+"void main()                                     \n"\
+"{                                               \n"\
+"    vec4 tex_val = texture(input, pixcoord);    \n"\
+"    output = fade_factor*tex_val*tex_val;       \n"\
+        "}                                               \n";
+
+    int f(buffer_t *input, buffer_t *result, float fade_factor ) {
+        SAY_HI();
+        const char* entry_name = "knl";
+
+        int threadsX = result->extent[0];
+        int threadsY = result->extent[1];
+        int threadsZ = result->extent[2];
+        int blocksX = 1; // don't care
+        int blocksY = 1; // don't care
+        int blocksZ = 1; // don't care
+        int shared_mem_bytes = 0; // don't care
+
+        char* arg_names[4];
+        arg_names[0] = "input";
+        arg_names[1] = "output";
+        arg_names[2] = "fade_factor";
+        size_t argSizes[] = { 1, 1, 1, 0};
+        void* args[] = { &input->dev, &result->dev, &fade_factor, 0 };
+
+        halide_dev_run(
+                       entry_name,
+                       blocksX,  blocksY,  blocksZ,
+                       threadsX, threadsY, threadsZ,
+                       shared_mem_bytes,
+                       arg_names,
+                       argSizes,
+                   args
+                       );
+    
+        return 0;
+    }
+
+    int main(int argc, char* argv[]) {
+        SAY_HI();
+        printf("hello world!\n");
+        halide_init_kernels(fragment_shader_src);
+
+        int W = 100, H = 200, C = 3;
+
+        buffer_t in, out;
+
+        in.dev = 0;
+        in.host = (uint8_t*) random_image(W, H, C, 1);
+        in.elem_size = sizeof(float);
+        in.extent[0] = W; in.extent[1] = H; in.extent[2] = C; in.extent[3] = 1;
+
+        out.dev = 0;
+        out.host = (uint8_t*) empty_image(W, H, C, 1);
+        out.elem_size = sizeof(float);
+        out.extent[0] = W; out.extent[1] = H; out.extent[2] = C; out.extent[3] = 1;
+
+        in.host_dirty = true;
+
+        halide_dev_malloc(&in);
+        halide_dev_malloc(&out);
+        halide_copy_to_dev(&in);
+
+        float fade_factor = 2.0;
+        f(&in, &out, fade_factor);
+
+        out.dev_dirty = true;
+        halide_copy_to_host(&out);
+        for (int y = 0; y < H; y++) {
+            for (int x = 0; x < W; x++) {
+                for (int c = 0; c < 3; c++) {
+                    int idx = y*W*3 + x*3 + c;
+                    float tex_val = ((float *) in.host)[idx];
+                    float ref = fade_factor*tex_val*tex_val;
+                    float result = ((float *) out.host)[idx];
+                    if (ref != result) {
+                        printf("mismatch at (%d, %d, %d), ref: %f  result: %f\n",
+                               x, y, c, ref, result);
+                        return -1;
+                    }
+                }
+            }
+        }
+        printf("success!\n");
+        return 0;
+    }
+
+#endif // TEST_STUB
 
 } // extern "C" linkage
