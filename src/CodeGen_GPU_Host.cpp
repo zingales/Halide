@@ -462,9 +462,28 @@ void CodeGen_GPU_Host::jit_init(ExecutionEngine *ee, Module *module) {
         }
     } else if (options & GPU_OpenGL) {
         debug(0) << "crap we should be linking libraries \n";
-        //assert(false && "crap");
-    } else {
-        assert(false && "uhoh");
+        debug(0) << "TODO: cache results of linking OpenGL lib\n";
+
+        // First check if libCuda has already been linked
+        // in. If so we shouldn't need to set any mappings.
+        // right now we need GLEW
+        if (dlsym(NULL, "glewInit")) {
+            debug(1) << "This program was linked to GLEW already\n";
+        } else {
+            debug(1) << "Looking for GLEW shared library...\n";
+            string error;
+            llvm::sys::DynamicLibrary::LoadLibraryPermanently("libGLEW.so", &error);
+            assert(error.empty() && "Could not find libGLEW.so");
+        }
+
+        if (dlsym(NULL, "glutInit")) {
+            debug(1) << "This program was linked to GLUT already\n";
+        } else {
+            debug(1) << "Looking for GLUT shared library...\n";
+            string error;
+            llvm::sys::DynamicLibrary::LoadLibraryPermanently("libglut.so", &error);
+            assert(error.empty() && "Could not find libglut.so");
+        }   
     }
 }
 
