@@ -303,7 +303,6 @@ CodeGen_GPU_Host::CodeGen_GPU_Host(uint32_t options) :
         initmod = halide_internal_initmod_opencl_host;
         initmod_length = halide_internal_initmod_opencl_host_length;
     } else if (options & GPU_OpenGL) {
-        debug(0) << "I didn't know what to do here, in CodeGen_GPU_Host.cpp line 302\n";
         initmod = halide_internal_initmod_opengl_host;
         initmod_length = halide_internal_initmod_opengl_host_length;
     }
@@ -349,6 +348,11 @@ void CodeGen_GPU_Host::compile(Stmt stmt, string name, const vector<Argument> &a
         std::cerr << "Error parsing initial module: " << errstr << "\n";
     }
     assert(module && "llvm encountered an error in parsing a bitcode file.");
+
+    //module->dump();
+
+    // try to see what (if anything) this module has
+    //iplist<Function, ilist_traits<Function> > funcs = module->getFunctionList();
 
     // grab runtime helper functions
     dev_malloc_fn = module->getFunction("halide_dev_malloc");
@@ -457,8 +461,8 @@ void CodeGen_GPU_Host::jit_init(ExecutionEngine *ee, Module *module) {
             assert(error.empty() && "Could not find libopencl.so, OpenCL.framework, or opencl.dll");
         }
     } else if (options & GPU_OpenGL) {
-        debug(0) << "crap\n";
-        assert(false && "crap");
+        debug(0) << "crap we should be linking libraries \n";
+        //assert(false && "crap");
     } else {
         assert(false && "uhoh");
     }
