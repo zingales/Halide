@@ -365,6 +365,7 @@ WEAK void halide_init_kernels(const char* src) {
         CHECK_ERROR();
         // make our shaders - vertex shader is the same for all
         vertex_shader = make_shader(GL_VERTEX_SHADER, vertex_shader_src, NULL);
+        assert(vertex_shader && "failed to make vertex shader");
         CHECK_ERROR();
         // now make fragment shader(s) from src
         std::string src_str = src;
@@ -390,8 +391,10 @@ WEAK void halide_init_kernels(const char* src) {
                 printf("making fragment shader named %s with src:\n---------\n%s\n--------\n",
                        knl_name.c_str(), knl.c_str());
                 GLuint fragment_shader = make_shader(GL_FRAGMENT_SHADER, knl.c_str(), NULL);
+                assert(fragment_shader && "failed to make fragment shader");
                 // now make program
                 GLuint program = make_program(vertex_shader, fragment_shader);
+                assert(program && "failed to make program");
                 __gl_programs[knl_name] = program;
                 CHECK_ERROR();
                 
