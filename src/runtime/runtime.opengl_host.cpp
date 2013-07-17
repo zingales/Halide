@@ -56,6 +56,27 @@ extern "C" {
 // TODO: make __f, __mod into arrays?
 // static vector<CUfunction> __f;
 }
+
+// map from kernel name to OpenGL program object reference
+typedef struct {
+    GLuint program;
+    std::string output_name;
+} program_metadata;
+std::map<std::string, program_metadata*>& __gl_programs() {
+    static std::map<std::string, program_metadata*> *ref = 
+        new std::map<std::string, program_metadata*>;
+    return *ref;
+}
+
+// map for storing additional texture data
+typedef struct {
+    buffer_t *buf;
+} tex_metadata;
+std::map<GLuint, tex_metadata*>& __tex_info() {
+    static std::map<GLuint, tex_metadata*> *ref = new std::map<GLuint, tex_metadata*>;
+    return *ref;
+}
+
 extern "C" {
 
 //apparently this is important
@@ -63,16 +84,8 @@ WEAK void *__dso_handle;
 
 // for parsing shader source
 #define KNL_DELIMITER "#version"
-#define KNL_NAME_DELIMITER "//"
-
-// map from kernel name to OpenGL program object reference
-static std::map<std::string, GLuint> __gl_programs;
-
-// map for storing additional texture data
-typedef struct {
-    buffer_t *buf;
-} tex_metadata;
-static std::map<GLuint, tex_metadata*> __tex_info;
+#define KNL_NAME_DELIMITER "//*KNL*//"
+#define OUTPUT_NAME_DELIMITER "//*OUT*//"
 
 // shared framebuffer
 static GLuint __framebuffer;
@@ -83,6 +96,10 @@ static bool __initialized;
 // these two arrays are going to be used by every program
 static GLuint vertex_buffer;
 static GLuint element_buffer;
+
+// data formats
+static GLenum fmts[] = {GL_RED, GL_RED, GL_RG, GL_RGB, GL_RGBA};
+static GLint internal_fmts[] = {GL_R32F, GL_R32F, GL_RG32F, GL_RGB32F, GL_RGBA32F};
 
 // info for filling said arrays
 static const GLfloat g_vertex_buffer_data[] = { 
@@ -244,7 +261,7 @@ WEAK void halide_dev_free(buffer_t* buf) {
     if (buf->dev) {
         const GLuint *tex_ref = (GLuint *) buf->dev;
         glDeleteTextures(1, tex_ref);
-        __tex_info.erase(*tex_ref);
+        __tex_info().erase(*tex_ref);
     }
     buf->dev = 0;
     CHECK_ERROR();
@@ -252,6 +269,7 @@ WEAK void halide_dev_free(buffer_t* buf) {
 
 WEAK void halide_dev_malloc(buffer_t* buf) {
     // we don't actually allocate memory here - we just get a name for the texture
+    assert(buf && "buf is null");
     SAY_HI();
     if (buf->dev) {
         return;
@@ -275,13 +293,12 @@ WEAK void halide_dev_malloc(buffer_t* buf) {
 
     int w = buf->extent[0];
     int h = buf->extent[1];
-    // for now constrain buffer to have 3 color channels
-    assert(buf->extent[2] == 3);
-    assert(buf->extent[3] == 1);
+    assert(buf->extent[2] <= 4 && "only support 3rd dimension of size <= 4");
+    assert(buf->extent[3] <= 1 && "only support 4th dimension of size <= 1");
     // TODO: vary format depending on 3rd dimension
-    GLenum format = GL_RGB;
     GLenum type = GL_FLOAT;
-    GLint internal_format = GL_RGB32F;
+    GLenum format = fmts[buf->extent[2]];
+    GLint internal_format = internal_fmts[buf->extent[2]];
     // this actually allocates the space
     // the space will be used as long as subsequent calls
     // to glTexImage2D have the same fmt and dimensions
@@ -289,10 +306,10 @@ WEAK void halide_dev_malloc(buffer_t* buf) {
                  0, format, type, NULL);
     buf->dev = texture;
     // save metadata where we can access it via the texture object name (which should be unique)
-    tex_metadata *d = (tex_metadata*) malloc(sizeof(tex_metadata));
+    tex_metadata *d = new tex_metadata;
     d->buf = buf;
-    assert(__tex_info.count(texture)==0 && "texture names should be unique");
-    __tex_info[texture] = d;
+    assert(__tex_info().count(texture)==0 && "texture names should be unique");
+    __tex_info()[texture] = d;
     // clean up
     glBindTexture(GL_TEXTURE_2D, 0);
     CHECK_ERROR();
@@ -319,10 +336,9 @@ WEAK void halide_copy_to_dev(buffer_t* buf) {
         
         glBindTexture(GL_TEXTURE_2D, buf->dev);
         CHECK_ERROR();
-        
-        GLenum format = GL_RGB;
         GLenum type = GL_FLOAT;
-        GLint internal_format = GL_RGB32F;
+        GLenum format = fmts[buf->extent[2]];
+        GLint internal_format = internal_fmts[buf->extent[2]];
         glTexImage2D(GL_TEXTURE_2D, 0, internal_format, w, h,
                      0, format, type, (void *) buf->host);
         CHECK_ERROR();
@@ -339,7 +355,9 @@ WEAK void halide_copy_to_host(buffer_t* buf) {
     if (buf->dev_dirty) {
         glFinish(); // is this necessary?
         glBindTexture(GL_TEXTURE_2D, (GLuint) buf->dev);
-        glGetTexImage(GL_TEXTURE_2D, 0, GL_RGB, GL_FLOAT, (void *) buf->host);
+        GLenum type = GL_FLOAT;
+        GLenum format = fmts[buf->extent[2]];
+        glGetTexImage(GL_TEXTURE_2D, 0, format, type, (void *) buf->host);
         glBindTexture(GL_TEXTURE_2D, 0);
         CHECK_ERROR();
     }
@@ -385,37 +403,54 @@ WEAK void halide_init_kernels(const char* src) {
         if (src_str.length() > 0) {
             size_t start_pos = src_str.find(KNL_DELIMITER); // start at first instance
             size_t end_pos = std::string::npos;
-            std::string knl;
-            std::string knl_name;
             std::string knl_name_delimiter = KNL_NAME_DELIMITER;
+            std::string output_name_delimiter = OUTPUT_NAME_DELIMITER;
             while(true) {
+                
+                // get kernel
                 end_pos = src_str.find(KNL_DELIMITER, start_pos+1);
                 printf("start %lu end %lu\n", start_pos, end_pos);
                 if (start_pos >= end_pos) {
                     printf("bailing out and dumping source:\n%s\n", src);
                     assert(false && "source is missing #version delimiter");
                 }
-                knl = src_str.substr(start_pos, end_pos - start_pos);
-                
+                std::string knl = src_str.substr(start_pos, end_pos - start_pos);
+                // get kernel name
                 size_t knl_name_start = knl.find(knl_name_delimiter) 
                     + knl_name_delimiter.length();
                 size_t knl_name_end = knl.find(knl_name_delimiter, knl_name_start);
-                knl_name = knl.substr(knl_name_start, knl_name_end - knl_name_start);
-                printf("making fragment shader named %s with src:\n---------\n%s\n--------\n",
-                       knl_name.c_str(), knl.c_str());
+                std::string knl_name = knl.substr(knl_name_start, knl_name_end - knl_name_start);
+                // get output name
+                size_t output_name_start = knl.find(output_name_delimiter) 
+                    + output_name_delimiter.length();
+                size_t output_name_end = knl.find(output_name_delimiter, output_name_start);
+                std::string output_name = knl.substr(output_name_start, 
+                                                     output_name_end - output_name_start);
+                // TODO: check for invalid names
+                // build shader
+                printf("making fragment shader named %s with output name %s with src:"
+                       "\n---------\n%s\n--------\n",
+                       knl_name.c_str(),
+                       output_name.c_str(),
+                       knl.c_str());
                 GLuint fragment_shader = make_shader(GL_FRAGMENT_SHADER, knl.c_str(), NULL);
                 assert(fragment_shader && "failed to make fragment shader");
                 // now make program
                 GLuint program = make_program(vertex_shader, fragment_shader);
                 assert(program && "failed to make program");
-                __gl_programs[knl_name] = program;
+                assert(__gl_programs().count(knl_name)==0 && "program names should be unique");
+                program_metadata *p = new program_metadata;
+                assert(p);
+                p->program = program;
+                p->output_name = output_name;
+                __gl_programs()[knl_name] = p;
                 CHECK_ERROR();
-                
                 if (end_pos == std::string::npos) {
                     break;
                 } else { // moar kernelz
                     start_pos = end_pos;
                 }
+                
             }
         }
         printf("kernel initialization success! src string lengeth was %ld\n", src_str.length());
@@ -434,9 +469,28 @@ WEAK void halide_dev_run(
                          void* args[])
 {
     SAY_HI();
+    // fetch the program
+    std::string output_name = __gl_programs()[entry_name]->output_name;
+    GLuint output_texture;
+    GLuint program =  __gl_programs()[entry_name]->program;
+    glUseProgram(program);
+    // set args
+    // first, put the input arguments into a map
+    std::map <std::string, void*> arg_map;
+    int i = 0;
+    while(arg_sizes[i]!=0) {
+        printf("arg[%d]: %s\n", i, arg_names[i]);
+        std::string str(arg_names[i]);
+        if (str==output_name) {
+            output_texture = * (GLuint *) args[i];
+        } else {
+            arg_map[str] = args[i];
+        }
+        ++i;
+    }
+
     // attach output texture to framebuffer
     // TODO: we can't assume that this is our output
-    GLuint output_texture = * (GLuint *) args[1];
     glBindTexture(GL_TEXTURE_2D, output_texture);
     glBindFramebuffer(GL_FRAMEBUFFER, __framebuffer);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
@@ -452,19 +506,7 @@ WEAK void halide_dev_run(
     // set the viewport to the size of the output
     glViewport(0, 0, threadsX, threadsY);
     CHECK_ERROR();
-    // fetch the program
-    GLuint program =  __gl_programs[entry_name];
-    glUseProgram(program);
-    // set args
-    // first, put the input arguments into a map
-    std::map <std::string, void*> arg_map;
-    int i = 0;
-    while(arg_sizes[i]!=0) {
-        printf("arg[%d]: %s\n", i, arg_names[i]);
-        std::string str(arg_names[i]);
-        arg_map[str] = args[i];
-        ++i;
-    }
+
     // explicitly add output dimensions
     GLint output_dim = glGetUniformLocation(program, "output_dim");
     GLint output_dim_val[] = {threadsX, threadsY};
@@ -490,7 +532,7 @@ WEAK void halide_dev_run(
             // for each input texture, we look up the dimension value and add it as argument
             void * val = arg_map[name];
             GLuint texture = * (GLuint *) val;
-            tex_metadata* d = __tex_info[texture];
+            tex_metadata* d = __tex_info()[texture];
             GLint dim[4];
             dim[0] = d->buf->extent[0];
             dim[1] = d->buf->extent[1];
@@ -542,7 +584,7 @@ WEAK void halide_dev_run(
         }
     }
     free(name);
-    
+
     GLint position = glGetAttribLocation(program, "position");
     glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer);
     glVertexAttribPointer(position,  /* attribute */
@@ -592,7 +634,7 @@ static float *random_image(int dim0, int dim1, int dim2, int dim3) {
 
 const char* fragment_shader_src = \
 "#version 120                                    \n"\
-"//knl//                                         \n"\
+"//*KNL*//knl//*KNL*//                           \n"\
 "uniform sampler2D texture;                      \n"\
 "uniform ivec4 dim_of_texture;                   \n"\
 "uniform float fade_factor;                      \n"\
@@ -601,10 +643,11 @@ const char* fragment_shader_src = \
 "void main()                                     \n"\
 "{                                               \n"\
 "    vec4 tex_val = texture2D(texture, pixcoord/dim_of_texture.xy);\n"\
+"    //*OUT*//output//*OUT*//                    \n"\
 "    gl_FragColor = fade_factor*tex_val*tex_val; \n"\
 "}                                               \n"\
 "#version 120                                    \n"\
-"//knl2//                                        \n"\
+"//*KNL*//knl2//*KNL*//                          \n"\
 "uniform sampler2D texture;                      \n"\
 "uniform ivec4 dim_of_texture;                   \n"\
 "uniform float fade_factor;                      \n"\
@@ -613,6 +656,7 @@ const char* fragment_shader_src = \
 "void main()                                     \n"\
 "{                                               \n"\
 "    vec4 tex_val = texture2D(texture, pixcoord);\n"\
+"    //*OUT*//output//*OUT*//                    \n"\
 "    gl_FragColor = fade_factor*tex_val*tex_val; \n"\
 "}                                               \n";
 
