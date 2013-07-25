@@ -258,8 +258,8 @@ buffer_t* WEAK __make_buffer(uint8_t* host, size_t elem_size,
 
 WEAK void halide_dev_free(buffer_t* buf) {
     SAY_HI();
-    if (buf->dev) {
-        const GLuint *tex_ref = (GLuint *) buf->dev;
+    if (buf && buf->dev) {
+        const GLuint *tex_ref = (GLuint *) &(buf->dev);
         glDeleteTextures(1, tex_ref);
         __tex_info().erase(*tex_ref);
     }
@@ -292,7 +292,11 @@ WEAK void halide_dev_malloc(buffer_t* buf) {
     CHECK_ERROR();
 
     int w = buf->extent[0];
+    w = w > 0 ? w : 1;
     int h = buf->extent[1];
+    h = h > 0 ? h : 1;
+    printf("mallocing buffer with dim [%d, %d, %d, %d]\n", buf->extent[0], buf->extent[1],
+           buf->extent[2], buf->extent[3]);
     assert(buf->extent[2] <= 4 && "only support 3rd dimension of size <= 4");
     assert(buf->extent[3] <= 1 && "only support 4th dimension of size <= 1");
     // TODO: vary format depending on 3rd dimension
@@ -329,10 +333,12 @@ WEAK void halide_copy_to_dev(buffer_t* buf) {
     if(buf->host_dirty) {
         printf("copying texture %d to device\n", (int) buf->dev);
         int w = buf->extent[0];
+        w = w > 0 ? w : 1;
         int h = buf->extent[1];
+        h = h > 0 ? h : 1;
         // for now constrain buffer to have 3 color channels
-        assert(buf->extent[2] == 3);
-        assert(buf->extent[3] == 1);
+        assert(buf->extent[2] <= 4);
+        assert(buf->extent[3] <= 1);
         
         glBindTexture(GL_TEXTURE_2D, buf->dev);
         CHECK_ERROR();
@@ -527,6 +533,7 @@ WEAK void halide_dev_run(
     std::string name_str;
     // add dimension arguments
     for (i = 0; i < n_active_uniforms; ++i) {
+        printf("HERE!!!1!\n");
         glGetActiveUniform(program, i, max_uniform_length, NULL, &size, &type, name);
         if (arg_map.count(name) > 0 && type==GL_SAMPLER_2D) {
             // for each input texture, we look up the dimension value and add it as argument
@@ -542,6 +549,7 @@ WEAK void halide_dev_run(
             name_str = "dim_of_" + std::string(name);
             GLint loc = glGetUniformLocation(program, name_str.c_str());
             glUniform4iv(loc, 1, dim);
+            printf("setting dim argument to [%d, %d, %d, %d]\n", dim[0], dim[1], dim[2], dim[3]);
         }
     }
     for (i = 0; i < n_active_uniforms; ++i) {
