@@ -81,9 +81,9 @@ void CodeGen_OpenGL_Dev::CodeGen_OpenGL_C::visit(const Load *op) {
     ostringstream rhs;
     //Type f1 = Float(32, 1);
     string idx_1d = print_expr(op->index);
-    string x = "pixcoord.x"; //print_assignment(f1, "mod(" + idx_1d + ", dim_of_" + op->name + ".x);");
-    string y = "pixcoord.y"; //print_assignment(f1, idx_1d + "/dim_of_" + op->name + ".y);");
-    string idx_2d = "vec2(" + x + "," + y + ")";
+    string x = "mod(" + idx_1d + ", dim_of_" + op->name + ".x)";
+    string y = "floor(float(" + idx_1d + ")/dim_of_" + op->name + ".y)";
+    string idx_2d = "vec2(" + x + ", " + y + ")";
     //rhs << "dim_of_" << print_name(op->name) << ".x";
     rhs << "texture2D("
         << print_name(op->name)

@@ -4,6 +4,7 @@
 #include "../buffer_t.h"
 #include <map>
 #include <string>
+#include <sstream>
 #include <math.h>
 
 // The PTX host extends the x86 target
@@ -486,7 +487,15 @@ WEAK void halide_dev_run(
     int i = 0;
     while(arg_sizes[i]!=0) {
         printf("arg[%d]: %s\n", i, arg_names[i]);
-        std::string str(arg_names[i]);
+        std::ostringstream oss;
+        char c;
+        int j = 0;
+        while((c = arg_names[i][j])!='\0') {
+            if (c == '.') oss << '_';
+            else oss << c;
+            j++;
+        }
+        std::string str = oss.str();
         if (str==output_name) {
             output_texture = * (GLuint *) args[i];
         } else {
@@ -531,9 +540,9 @@ WEAK void halide_dev_run(
     GLenum type;
     GLchar *name = (char*) malloc(max_uniform_length*sizeof(char));
     std::string name_str;
+    std::string foo[4] = {"_x_extent", "_y_extent", "_z_extent", "_w_extent"};
     // add dimension arguments
     for (i = 0; i < n_active_uniforms; ++i) {
-        printf("HERE!!!1!\n");
         glGetActiveUniform(program, i, max_uniform_length, NULL, &size, &type, name);
         if (arg_map.count(name) > 0 && type==GL_SAMPLER_2D) {
             // for each input texture, we look up the dimension value and add it as argument
@@ -541,15 +550,19 @@ WEAK void halide_dev_run(
             GLuint texture = * (GLuint *) val;
             tex_metadata* d = __tex_info()[texture];
             GLint dim[4];
-            dim[0] = d->buf->extent[0];
-            dim[1] = d->buf->extent[1];
-            dim[2] = d->buf->extent[2];
-            dim[3] = d->buf->extent[3];
+            GLint loc;
+            for (int j = 0; j < 4; j++) {
+                dim[j] = d->buf->extent[j];
+                dim[j] = dim[j] > 0 ? dim[j] : 1;
+            }
             // it would be nicer maybe to put this in the arg_map
             name_str = "dim_of_" + std::string(name);
-            GLint loc = glGetUniformLocation(program, name_str.c_str());
-            glUniform4iv(loc, 1, dim);
-            printf("setting dim argument to [%d, %d, %d, %d]\n", dim[0], dim[1], dim[2], dim[3]);
+            loc = glGetUniformLocation(program, name_str.c_str());
+            if (loc!=-1) {
+                glUniform4iv(loc, 1, dim);
+                printf("setting ivec4 arg %s to [%d, %d, %d, %d]\n",
+                       name_str.c_str(), dim[0], dim[1], dim[2], dim[3]);
+            }
         }
     }
     for (i = 0; i < n_active_uniforms; ++i) {
