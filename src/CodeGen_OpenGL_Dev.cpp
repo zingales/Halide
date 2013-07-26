@@ -47,11 +47,14 @@ string CodeGen_OpenGL_Dev::CodeGen_OpenGL_C::print_type(Type type) {
             assert(type.is_int() && "Can't represent an unsigned integer in OpenGL ES SL, let alone a vector of them");
         }
         oss << "vec" << type.width;
-        // TODO width
     } else {
         assert(false && "Can't codegen vector types wider than 4 in OpenGL ES SL");
     }        
     return oss.str();
+}
+
+void CodeGen_OpenGL_Dev::CodeGen_OpenGL_C::visit(const Cast *op) {
+    print_assignment(op->type, print_type(op->type) + "(" + print_expr(op->value) + ")");
 }
 
 void CodeGen_OpenGL_Dev::CodeGen_OpenGL_C::visit(const For *loop) {
@@ -60,13 +63,20 @@ void CodeGen_OpenGL_Dev::CodeGen_OpenGL_C::visit(const For *loop) {
         assert(loop->for_type == For::Parallel && "kernel loop must be parallel");
 
         string idx;
-        if (ends_with(loop->name, ".blockidx") || 
-            ends_with(loop->name, ".blockidy")) {
+        if (ends_with(loop->name, ".blockidx")) {
+            idx = "0"; // initialize to 0 for now, set value later once we know what the extent of the threads loop is
+        } else if (ends_with(loop->name, ".blockidy")) {
             idx = "0";
         } else if (ends_with(loop->name, ".threadidx")) {
-            idx = "int(pixcoord.x)";
+            idx = "int(mod(pixcoord.x, " + print_expr(loop->extent) + "))";
+            string block_id = print_name(loop->name).substr(0, loop->name.length() - 9) + "blockidx";
+            do_indent();
+            stream << block_id << " = " << "int(floor(pixcoord.x/" << loop->extent << "));\n";
         } else if (ends_with(loop->name, ".threadidy")) {
-            idx = "int(pixcoord.y)";
+            idx = "int(mod(pixcoord.y, " + print_expr(loop->extent) + "))";
+            string block_id = print_name(loop->name).substr(0, loop->name.length() - 9) + "blockidy";
+            do_indent();
+            stream << block_id << " = " << "int(floor(pixcoord.y/" << loop->extent << "));\n";
         }
         do_indent();
         stream << print_type(Int(32)) << " " << print_name(loop->name) << " = " << idx << ";\n";
@@ -79,12 +89,11 @@ void CodeGen_OpenGL_Dev::CodeGen_OpenGL_C::visit(const For *loop) {
 
 void CodeGen_OpenGL_Dev::CodeGen_OpenGL_C::visit(const Load *op) {
     ostringstream rhs;
-    //Type f1 = Float(32, 1);
     string idx_1d = print_expr(op->index);
-    string x = "mod(" + idx_1d + ", dim_of_" + op->name + ".x)";
-    string y = "floor(float(" + idx_1d + ")/dim_of_" + op->name + ".y)";
+    // add .5 to center on pixels in textures
+    string x = "mod(" + idx_1d + " + 0.5, dim_of_" + op->name + ".x)";
+    string y = "float(" + idx_1d + " + 0.5)/dim_of_" + op->name + ".y";
     string idx_2d = "vec2(" + x + ", " + y + ")";
-    //rhs << "dim_of_" << print_name(op->name) << ".x";
     rhs << "texture2D("
         << print_name(op->name)
         << ", "
@@ -93,7 +102,6 @@ void CodeGen_OpenGL_Dev::CodeGen_OpenGL_C::visit(const Load *op) {
         << print_name(op->name)
         << ".xy"
         << ").x";
-    //Type f4 = Float(32, 4);
     print_assignment(op->type, rhs.str());
 }
 
@@ -115,7 +123,6 @@ void CodeGen_OpenGL_Dev::CodeGen_OpenGL_C::visit(const Store *op) {
 
 void CodeGen_OpenGL_Dev::compile(Stmt s, string name, const vector<Argument> &args) {
     debug(0) << "hi CodeGen_OpenGL_Dev::compile! " << name << "\n";
-
     // TODO: do we have to uniquify these names, or can we trust that they are safe?
     cur_kernel_name = name;
     clc->compile(s, name, args);

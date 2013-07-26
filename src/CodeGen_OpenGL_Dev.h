@@ -42,6 +42,7 @@ protected:
         using CodeGen_C::visit;
         std::string print_type(Type type);
         
+        void visit(const Cast *);
         void visit(const For *);
         void visit(const Load *);
         void visit(const Store *);

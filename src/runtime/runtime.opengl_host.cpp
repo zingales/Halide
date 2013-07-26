@@ -50,12 +50,6 @@ extern "C" {
 #define SAY_HI() 
 #endif //NDEBUG
 
-
-
-// Device, Context, Module, and Function for this entrypoint are tracked locally
-// and constructed lazily on first run.
-// TODO: make __f, __mod into arrays?
-// static vector<CUfunction> __f;
 }
 
 // map from kernel name to OpenGL program object reference
@@ -123,7 +117,7 @@ const char* vertex_shader_src = \
 "{                                                    \n"\
 "    gl_Position = vec4(position, 0.0, 1.0);          \n"\
 "    vec2 texcoord = position*vec2(0.5) + vec2(0.5);  \n"\
-"    pixcoord = output_dim*texcoord;                  \n"\
+"    pixcoord = floor(output_dim*texcoord);           \n"\
 "}                                                    \n\0";
 
 static GLuint vertex_shader;
@@ -140,8 +134,6 @@ void check_framebuffer_status(GLuint framebuffer) {
         printf("framebuffer =)\n");
     } else if (status==GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT) {
         printf("GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT\n");
-        //} else if (status==GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS) {
-        //printf("GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS\n");
     } else if (status==GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT) {
         printf("GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT\n");
     } else if (status==GL_FRAMEBUFFER_UNDEFINED) {
@@ -234,27 +226,6 @@ static GLuint make_program(GLuint vertex_shader, GLuint fragment_shader)
 
 // -------------------------- END OPENGL CODE ---------------------------------//
 
-// Used to create buffer_ts to track internal allocations caused by our runtime
-// TODO: add checks specific to the sorts of images that OpenGL can handle
-buffer_t* WEAK __make_buffer(uint8_t* host, size_t elem_size,
-                        size_t dim0, size_t dim1,
-                        size_t dim2, size_t dim3)
-{
-    buffer_t* buf = (buffer_t*)malloc(sizeof(buffer_t));
-    buf->host = host;
-    buf->dev = 0;
-    buf->extent[0] = dim0;
-    buf->extent[1] = dim1;
-    buf->extent[2] = dim2;
-    buf->extent[3] = dim3;
-    buf->elem_size = elem_size;
-    buf->host_dirty = false;
-    buf->dev_dirty = false;
-    return buf;
-}
-
-// functions expected by CodeGen_GPU_Host
-
 // functions expected by CodeGen_GPU_Host
 
 WEAK void halide_dev_free(buffer_t* buf) {
@@ -291,7 +262,7 @@ WEAK void halide_dev_malloc(buffer_t* buf) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     CHECK_ERROR();
-
+    // make sure width and height are nonzero
     int w = buf->extent[0];
     w = w > 0 ? w : 1;
     int h = buf->extent[1];
@@ -300,7 +271,7 @@ WEAK void halide_dev_malloc(buffer_t* buf) {
            buf->extent[2], buf->extent[3]);
     assert(buf->extent[2] <= 4 && "only support 3rd dimension of size <= 4");
     assert(buf->extent[3] <= 1 && "only support 4th dimension of size <= 1");
-    // TODO: vary format depending on 3rd dimension
+    // TODO: vary type (only support floats for now)
     GLenum type = GL_FLOAT;
     GLenum format = fmts[buf->extent[2]];
     GLint internal_format = internal_fmts[buf->extent[2]];
@@ -413,7 +384,6 @@ WEAK void halide_init_kernels(const char* src) {
             std::string knl_name_delimiter = KNL_NAME_DELIMITER;
             std::string output_name_delimiter = OUTPUT_NAME_DELIMITER;
             while(true) {
-                
                 // get kernel
                 end_pos = src_str.find(KNL_DELIMITER, start_pos+1);
                 printf("start %lu end %lu\n", start_pos, end_pos);
@@ -460,7 +430,7 @@ WEAK void halide_init_kernels(const char* src) {
                 
             }
         }
-        printf("kernel initialization success! src string lengeth was %ld\n", src_str.length());
+        printf("kernel initialization success! src string length was %ld\n", src_str.length());
     }
     // mark as initialized
     __initialized = true;
@@ -476,6 +446,9 @@ WEAK void halide_dev_run(
                          void* args[])
 {
     SAY_HI();
+    // todo: convert blocks range and threads range into quad indices
+    printf("blocksX: %d blocksY: %d blocksZ: %d threadsX: %d threadsY: %d threadsZ: %d\n",
+           blocksX, blocksY, blocksZ, threadsX, threadsY, threadsZ);
     // fetch the program
     std::string output_name = __gl_programs()[entry_name]->output_name;
     GLuint output_texture;
@@ -519,12 +492,15 @@ WEAK void halide_dev_run(
     glDrawBuffers(1, bufs);
     CHECK_ERROR();
     // set the viewport to the size of the output
-    glViewport(0, 0, threadsX, threadsY);
+    buffer_t *output_buf = __tex_info()[output_texture]->buf;
+    printf("output buf extents: [%d, %d, %d, %d]\n", output_buf->extent[0],
+           output_buf->extent[1], output_buf->extent[2], output_buf->extent[3]);
+    glViewport(0, 0, output_buf->extent[0], output_buf->extent[1]);
     CHECK_ERROR();
 
     // explicitly add output dimensions
     GLint output_dim = glGetUniformLocation(program, "output_dim");
-    GLint output_dim_val[] = {threadsX, threadsY};
+    GLint output_dim_val[] = {output_buf->extent[0], output_buf->extent[1]};
     arg_map["output_dim"] = (void *) output_dim_val;
     // now add passed in arguments
     GLint n_active_uniforms;
@@ -592,7 +568,7 @@ WEAK void halide_dev_run(
                 num_active_textures++;
             } else if (type==GL_INT_VEC2) {
                 // this is probably our output dimensions
-                printf("setting int vec2 arg %s to {%d, %d}\n", name,
+                printf("setting ivec2 arg %s to {%d, %d}\n", name,
                        * (int *) val, * (((int *) val) + 1));
                 glUniform2iv(output_dim, 1, output_dim_val);
             } else {
