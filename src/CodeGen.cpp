@@ -27,26 +27,50 @@ using std::stack;
 
 // Define a local empty inline function for each target
 // to disable initialization.
-#define LLVM_TARGET(target)             \
-    void inline Initialize##target##Target() { \
-    }
-
+#define LLVM_TARGET(target) \
+    inline void Initialize##target##Target() {}
 #include <llvm/Config/Targets.def>
-
 #undef LLVM_TARGET
+
+#define LLVM_ASM_PARSER(target)     \
+    inline void Initialize##target##AsmParser() {}
+#include <llvm/Config/AsmParsers.def>
+#undef LLVM_ASM_PARSER
+
+#define LLVM_ASM_PRINTER(target)    \
+    inline void Initialize##target##AsmPrinter() {}
+#include <llvm/Config/AsmPrinters.def>
+#undef LLVM_ASM_PRINTER
 
 #define InitializeTarget(target)              \
         LLVMInitialize##target##Target();     \
         LLVMInitialize##target##TargetInfo(); \
-        LLVMInitialize##target##AsmPrinter(); \
         LLVMInitialize##target##TargetMC();   \
         llvm_##target##_enabled = true;
 
+#define InitializeAsmParser(target)           \
+        LLVMInitialize##target##AsmParser();  \
+
+#define InitializeAsmPrinter(target)          \
+        LLVMInitialize##target##AsmPrinter(); \
+
 // Override above empty init function with macro for supported targets.
-#define InitializeX86Target()   InitializeTarget(X86)
-#define InitializeARMTarget()   InitializeTarget(ARM)
+#if WITH_X86
+#define InitializeX86Target()       InitializeTarget(X86)
+#define InitializeX86AsmParser()    InitializeAsmParser(X86)
+#define InitializeX86AsmPrinter()   InitializeAsmPrinter(X86)
+#endif
+
+#if WITH_ARM
+#define InitializeARMTarget()       InitializeTarget(ARM)
+#define InitializeARMAsmParser()    InitializeAsmParser(ARM)
+#define InitializeARMAsmPrinter()   InitializeAsmPrinter(ARM)
+#endif
+
 #if WITH_PTX
-#define InitializeNVPTXTarget() InitializeTarget(NVPTX)
+#define InitializeNVPTXTarget()       InitializeTarget(NVPTX)
+#define InitializeNVPTXAsmParser()    InitializeAsmParser(NVPTX)
+#define InitializeNVPTXAsmPrinter()   InitializeAsmPrinter(NVPTX)
 #endif
 
 CodeGen::CodeGen() :
@@ -66,11 +90,19 @@ CodeGen::CodeGen() :
         InitializeNativeTargetAsmParser();
 
         #define LLVM_TARGET(target)         \
-            Initialize##target##Target();   \
-
+            Initialize##target##Target();
         #include <llvm/Config/Targets.def>
-
         #undef LLVM_TARGET
+
+        #define LLVM_ASM_PARSER(target)     \
+            Initialize##target##AsmParser();
+        #include <llvm/Config/AsmParsers.def>
+        #undef LLVM_ASM_PARSER
+
+        #define LLVM_ASM_PRINTER(target)    \
+            Initialize##target##AsmPrinter();
+        #include <llvm/Config/AsmPrinters.def>
+        #undef LLVM_ASM_PRINTER
 
         llvm_initialized = true;
     }
@@ -178,7 +210,7 @@ void CodeGen::compile(Stmt stmt, string name, const vector<Argument> &args) {
     // Now we need to end the function
     builder->CreateRetVoid();
 
-    module->setModuleIdentifier("halide_" + name);
+    module->setModuleIdentifier("halide_module_" + name);
     debug(2) << module << "\n";
 
     // Now verify the function is ok
@@ -257,15 +289,16 @@ void CodeGen::optimize_module() {
     llvm::Function *fn = module->getFunction(function_name);
     assert(fn && "Could not find function inside llvm module");
 
+    if (debug::debug_level >= 3) {
+        module->dump();
+    }
+
     // Run optimization passes
     module_pass_manager.run(*module);
     function_pass_manager.doInitialization();
     function_pass_manager.run(*fn);
     function_pass_manager.doFinalization();
 
-    if (debug::debug_level >= 3) {
-        module->dump();
-    }
 }
 
 void CodeGen::compile_to_bitcode(const string &filename) {
@@ -308,7 +341,6 @@ void CodeGen::compile_to_native(const string &filename, bool assembly) {
     options.GuaranteedTailCallOpt = false;
     options.DisableTailCalls = false;
     options.StackAlignmentOverride = 0;
-    options.RealignStack = true;
     options.TrapFuncName = "";
     options.PositionIndependentExecutable = true;
     options.EnableSegmentedStacks = false;
@@ -582,6 +614,10 @@ void CodeGen::visit(const Variable *op) {
 void CodeGen::visit(const Add *op) {
     if (op->type.is_float()) {
         value = builder->CreateFAdd(codegen(op->a), codegen(op->b));
+    } else if (op->type.is_int()) {
+        // We tell llvm integers don't wrap, so that it generates good
+        // code for loop indices.
+        value = builder->CreateNSWAdd(codegen(op->a), codegen(op->b));
     } else {
         value = builder->CreateAdd(codegen(op->a), codegen(op->b));
     }
@@ -590,6 +626,10 @@ void CodeGen::visit(const Add *op) {
 void CodeGen::visit(const Sub *op) {
     if (op->type.is_float()) {
         value = builder->CreateFSub(codegen(op->a), codegen(op->b));
+    } else if (op->type.is_int()) {
+        // We tell llvm integers don't wrap, so that it generates good
+        // code for loop indices.
+        value = builder->CreateNSWSub(codegen(op->a), codegen(op->b));
     } else {
         value = builder->CreateSub(codegen(op->a), codegen(op->b));
     }
@@ -598,6 +638,10 @@ void CodeGen::visit(const Sub *op) {
 void CodeGen::visit(const Mul *op) {
     if (op->type.is_float()) {
         value = builder->CreateFMul(codegen(op->a), codegen(op->b));
+    } else if (op->type.is_int()) {
+        // We tell llvm integers don't wrap, so that it generates good
+        // code for loop indices.
+        value = builder->CreateNSWMul(codegen(op->a), codegen(op->b));
     } else {
         value = builder->CreateMul(codegen(op->a), codegen(op->b));
     }
@@ -697,7 +741,7 @@ void CodeGen::visit(const Mod *op) {
         Value *rem_xor_b_lt_zero = builder->CreateICmpSLT(rem_xor_b, zero);
         Value *need_to_add_b = builder->CreateAnd(rem_not_zero, rem_xor_b_lt_zero);
         Value *offset = builder->CreateSelect(need_to_add_b, b, zero);
-        value = builder->CreateAdd(rem, offset);
+        value = builder->CreateNSWAdd(rem, offset);
     }
 }
 
@@ -835,6 +879,34 @@ void CodeGen::visit(const Select *op) {
     }
 }
 
+namespace {
+Expr promote_64(Expr e) {
+    if (const Add *a = e.as<Add>()) {
+        return Add::make(promote_64(a->a), promote_64(a->b));
+    } else if (const Sub *s = e.as<Sub>()) {
+        return Sub::make(promote_64(s->a), promote_64(s->b));
+    } else if (const Mul *m = e.as<Mul>()) {
+        return Mul::make(promote_64(m->a), promote_64(m->b));
+    } else if (const Min *m = e.as<Min>()) {
+        return Min::make(promote_64(m->a), promote_64(m->b));
+    } else if (const Max *m = e.as<Max>()) {
+        return Max::make(promote_64(m->a), promote_64(m->b));
+    } else {
+        return Cast::make(Int(64), e);
+    }
+}
+}
+
+Value *CodeGen::codegen_buffer_pointer(string buffer, Halide::Type type, Expr index) {
+    // Promote index to 64-bit on targets that use 64-bit pointers.
+    if (module->getPointerSize() == llvm::Module::Pointer64) {
+        index = promote_64(index);
+    }
+
+    return codegen_buffer_pointer(buffer, type, codegen(index));
+}
+
+
 Value *CodeGen::codegen_buffer_pointer(string buffer, Halide::Type type, Value *index) {
     // Find the base address from the symbol table
     Value *base_address = symbol_table.get(buffer + ".host");
@@ -846,6 +918,11 @@ Value *CodeGen::codegen_buffer_pointer(string buffer, Halide::Type type, Value *
     // If the type doesn't match the expected type, we need to pointer cast
     if (load_type != base_address_type) {
         base_address = builder->CreatePointerCast(base_address, load_type);
+    }
+
+    // Promote index to 64-bit on targets that use 64-bit pointers.
+    if (module->getPointerSize() == llvm::Module::Pointer64) {
+        index = builder->CreateIntCast(index, i64, true);
     }
 
     return builder->CreateInBoundsGEP(base_address, index);
@@ -860,17 +937,16 @@ void CodeGen::add_tbaa_metadata(llvm::Instruction *inst, string buffer) {
 }
 
 void CodeGen::visit(const Load *op) {
-    // There are several cases. Different architectures may wish to override some
 
+    // There are several cases. Different architectures may wish to override some.
     if (op->type.is_scalar()) {
         // Scalar loads
-        Value *index = codegen(op->index);
-        Value *ptr = codegen_buffer_pointer(op->name, op->type, index);
-        LoadInst *load = builder->CreateLoad(ptr);
+        Value *ptr = codegen_buffer_pointer(op->name, op->type, op->index);
+        LoadInst *load = builder->CreateAlignedLoad(ptr, op->type.bytes());
         add_tbaa_metadata(load, op->name);
         value = load;
     } else {
-        int alignment = op->type.bits / 8;
+        int alignment = op->type.bytes();
         const Ramp *ramp = op->index.as<Ramp>();
         const IntImm *stride = ramp ? ramp->stride.as<IntImm>() : NULL;
 
@@ -885,8 +961,7 @@ void CodeGen::visit(const Load *op) {
         }
 
         if (ramp && stride && stride->value == 1) {
-            Value *base = codegen(ramp->base);
-            Value *ptr = codegen_buffer_pointer(op->name, op->type.element_of(), base);
+            Value *ptr = codegen_buffer_pointer(op->name, op->type.element_of(), ramp->base);
             ptr = builder->CreatePointerCast(ptr, llvm_type_of(op->type)->getPointerTo());
             LoadInst *load = builder->CreateAlignedLoad(ptr, alignment);
             add_tbaa_metadata(load, op->name);
@@ -910,8 +985,7 @@ void CodeGen::visit(const Load *op) {
                 new_base = ramp->base;
             }
 
-            Value *base = codegen(new_base);
-            Value *ptr = codegen_buffer_pointer(op->name, op->type.element_of(), base);
+            Value *ptr = codegen_buffer_pointer(op->name, op->type.element_of(), new_base);
             ptr = builder->CreatePointerCast(ptr, llvm_type_of(op->type)->getPointerTo());
             LoadInst *a = builder->CreateAlignedLoad(ptr, alignment);
             add_tbaa_metadata(a, op->name);
@@ -926,11 +1000,11 @@ void CodeGen::visit(const Load *op) {
             value = builder->CreateShuffleVector(a, b, ConstantVector::get(indices));
         } else if (ramp && stride && stride->value == -1) {
             // Load the vector and then flip it in-place
-            Value *base = codegen(ramp->base - ramp->width + 1);
+            Expr base = ramp->base - ramp->width + 1;
 
             // Re-do alignment analysis for the flipped index
             if (internal) {
-                alignment = op->type.bits / 8;
+                alignment = op->type.bytes();
                 ModulusRemainder mod_rem = modulus_remainder(ramp->base - ramp->width + 1);
                 alignment *= gcd(gcd(mod_rem.modulus, mod_rem.remainder), 32);
             }
@@ -948,7 +1022,7 @@ void CodeGen::visit(const Load *op) {
             value = builder->CreateShuffleVector(vec, undef, ConstantVector::get(indices));
         } else if (ramp) {
             // Gather without generating the indices as a vector
-            Value *ptr = codegen_buffer_pointer(op->name, op->type.element_of(), codegen(ramp->base));
+            Value *ptr = codegen_buffer_pointer(op->name, op->type.element_of(), ramp->base);
             Value *stride = codegen(ramp->stride);
             value = UndefValue::get(llvm_type_of(op->type));
             for (int i = 0; i < ramp->width; i++) {
@@ -966,7 +1040,7 @@ void CodeGen::visit(const Load *op) {
             // Compute the index as scalars, and then do a gather
             Value *vec = UndefValue::get(llvm_type_of(op->type));
             for (int i = 0; i < op->type.width; i++) {
-                Value *idx = codegen(extract_lane(op->index, i));
+                Expr idx = extract_lane(op->index, i);
                 Value *ptr = codegen_buffer_pointer(op->name, op->type.element_of(), idx);
                 LoadInst *val = builder->CreateLoad(ptr);
                 add_tbaa_metadata(val, op->name);
@@ -1011,7 +1085,7 @@ void CodeGen::visit(const Ramp *op) {
                 if (op->type.is_float()) {
                     base = builder->CreateFAdd(base, stride);
                 } else {
-                    base = builder->CreateAdd(base, stride);
+                    base = builder->CreateNSWAdd(base, stride);
                 }
             }
             value = builder->CreateInsertElement(value, base, ConstantInt::get(i32, i));
@@ -1174,6 +1248,172 @@ void CodeGen::visit(const Call *op) {
                 Intrinsic::readcyclecounter, std::vector<llvm::Type*>());
             CallInst *call = builder->CreateCall(fn);
             value = call;
+        } else if (op->name == Call::lerp) {
+            assert(op->args.size() == 3);
+
+            Expr zero_val = op->args[0];
+            Expr one_val  = op->args[1];
+            Expr weight   = op->args[2];
+
+            Expr result;
+
+            assert(zero_val.type() == one_val.type());
+            assert(weight.type().is_uint() || weight.type().is_float());
+
+            Type result_type = zero_val.type();
+
+            int bias_value = 0;
+            Type computation_type = result_type;
+
+            if (zero_val.type().is_int()) {
+                computation_type = UInt(zero_val.type().bits, zero_val.type().width);
+                bias_value = result_type.imin();
+            }
+
+            // For signed integer types, just convert everything to unsigned
+            // and then back at the end to ensure proper rounding, etc.
+            // There is likely a better way to handle this.
+            if (result_type != computation_type) {
+                zero_val = Cast::make(computation_type, zero_val - bias_value);
+                one_val =  Cast::make(computation_type, one_val  - bias_value);
+            }
+
+            if (result_type.is_bool()) {
+                Expr half_weight;
+                if (weight.type().is_float())
+                    half_weight = 0.5f;
+                else {
+                  half_weight = weight.type().imax() / 2;
+                }
+
+                result = select(weight > half_weight, one_val, zero_val);
+            } else {
+                Expr typed_weight;
+                Expr inverse_typed_weight;
+
+                if (weight.type().is_float()) {
+                    typed_weight = weight;
+                    if (computation_type.is_uint()) {
+		        // TODO: Verify this reduces to efficient code or
+		        // figure out a better way to express a multiply
+		        // of unsigned 2^32-1 by a double promoted weight
+                        if (computation_type.bits == 32) {
+                           typed_weight =
+                              Cast::make(computation_type,
+                                         Expr(65535.0f) * Expr(65537.0f) *
+					 cast<double>(typed_weight));
+                        } else {
+                          typed_weight =
+                              Cast::make(computation_type,
+                                         computation_type.imax() * typed_weight);
+                        }
+                        inverse_typed_weight = computation_type.imax() - typed_weight;
+                    } else {
+                        inverse_typed_weight = 1.0f - typed_weight;
+                    }
+
+                } else {
+                    if (computation_type.is_float()) {
+                        int weight_bits = weight.type().bits;
+                        if (weight_bits == 32) {
+                            // Should use ldexp, but can't make Expr from result
+                            // that is double
+                            typed_weight =
+                              Cast::make(computation_type,
+                                         cast<double>(weight) / (pow(cast<double>(2), 32) - 1));
+                        } else {
+                            typed_weight =
+                              Cast::make(computation_type,
+                                         weight / ((float)ldexp(1.0f, weight_bits) - 1));
+                        }
+                        inverse_typed_weight = 1.0f - typed_weight;
+                    } else {
+                        // This code rescales integer weights to the right number of bits.
+                        // It takes advantage of (2^n - 1) == (2^(n/2) - 1)(2^(n/2) + 1)
+                        // e.g. 65535 = 255 * 257. (Ditto for the 32-bit equivalent.)
+                        // To recale a weight of m bits to be n bits, we need to do:
+                        //     scaled_weight = (weight / (2^m - 1)) * (2^n - 1)
+                        // which power of two values for m and n, results in a series like
+                        // so:
+                        //     (2^(m/2) + 1) * (2^(m/4) + 1) ... (2^(n*2) + 1)
+                        // The loop below computes a scaling constant and either multiples
+                        // or divides by the constant and relies on lowering and llvm to
+                        // generate efficient code for the operation.
+                        int bit_size_difference = weight.type().bits - computation_type.bits;
+                        if (bit_size_difference == 0) {
+                            typed_weight = weight;
+                        } else {
+                            typed_weight = Cast::make(computation_type, weight);
+
+                            int bits_left = ::abs(bit_size_difference);
+                            int shift_amount = std::min(computation_type.bits, weight.type().bits);
+                            uint64_t scaling_factor = 1;
+                            while (bits_left != 0) {
+                              assert(bits_left > 0);
+                                scaling_factor = scaling_factor + (scaling_factor << shift_amount);
+                                bits_left -= shift_amount;
+                                shift_amount *= 2;
+                            }
+                            if (bit_size_difference < 0) {
+                                typed_weight =
+                                  Cast::make(computation_type, weight) *
+                                  cast(computation_type, (int32_t)scaling_factor);
+                            } else {
+                                typed_weight =
+                                    Cast::make(computation_type,
+                                               weight / cast(weight.type(), (int32_t)scaling_factor));
+                            }
+                        }
+                        inverse_typed_weight =
+                            Cast::make(computation_type,
+                                       computation_type.imax() - typed_weight);
+                    }
+                }
+
+                if (computation_type.is_float()) {
+                    result = zero_val * inverse_typed_weight +
+                             one_val * typed_weight;
+                } else {
+                    int32_t bits = computation_type.bits;
+                    switch (bits) {
+                    case 1:
+                        result = select(typed_weight, one_val, zero_val);
+                        break;
+                    case 8:
+                    case 16:
+                    case 32: {
+                        Expr zero_expand = Cast::make(UInt(2 * bits, computation_type.width),
+                                                      zero_val);
+                        Expr  one_expand = Cast::make(UInt(2 * bits, one_val.type().width),
+                                                      one_val);
+
+                        Expr rounding = Cast::make(UInt(2 * bits), 1) << Cast::make(UInt(2 * bits), (bits - 1));
+                        Expr divisor  = Cast::make(UInt(2 * bits), 1) << Cast::make(UInt(2 * bits), bits);
+
+                        Expr prod_sum = zero_expand * inverse_typed_weight +
+                                        one_expand * typed_weight + rounding;
+                        Expr divided = ((prod_sum / divisor) + prod_sum) / divisor;
+
+                        result = Cast::make(UInt(bits, computation_type.width), divided);
+                        break;
+                    }
+                    case 64:
+                        // TODO: 64-bit lerp is not supported as current approach
+                        // requires double-width multiply.
+                        // There is an informative error message in IROperator.h.
+                        assert(false);
+                        break;
+                    default:
+                        break;
+                    }
+                }
+
+                if (bias_value != 0) {
+                  result = Cast::make(result_type, result + bias_value);
+                }
+            }
+
+            value = codegen(result);
         } else {
             std::cerr << "Unknown intrinsic: " << op->name << "\n";
             assert(false);
@@ -1246,7 +1486,6 @@ void CodeGen::visit(const Call *op) {
                     call->setDoesNotThrow();
                 }
                 value = call;
-                fn = vec_fn;
             } else {
                 // Scalarize. Extract each simd lane in turn and do
                 // one scalar call to the function.
@@ -1422,7 +1661,7 @@ void CodeGen::visit(const For *op) {
     Value *extent = codegen(op->extent);
 
     if (op->for_type == For::Serial) {
-        Value *max = builder->CreateAdd(min, extent);
+        Value *max = builder->CreateNSWAdd(min, extent);
 
         BasicBlock *preheader_bb = builder->GetInsertBlock();
 
@@ -1436,7 +1675,7 @@ void CodeGen::visit(const For *op) {
         builder->CreateCondBr(enter_condition, loop_bb, after_bb);
         builder->SetInsertPoint(loop_bb);
 
-        // Make our phi node
+        // Make our phi node.
         PHINode *phi = builder->CreatePHI(i32, 2);
         phi->addIncoming(min, preheader_bb);
 
@@ -1447,7 +1686,7 @@ void CodeGen::visit(const For *op) {
         codegen(op->body);
 
         // Update the counter
-        Value *next_var = builder->CreateAdd(phi, ConstantInt::get(i32, 1));
+        Value *next_var = builder->CreateNSWAdd(phi, ConstantInt::get(i32, 1));
 
         // Add the back-edge to the phi node
         phi->addIncoming(next_var, builder->GetInsertBlock());
@@ -1534,12 +1773,11 @@ void CodeGen::visit(const Store *op) {
     Halide::Type value_type = op->value.type();
     // Scalar
     if (value_type.is_scalar()) {
-        Value *index = codegen(op->index);
-        Value *ptr = codegen_buffer_pointer(op->name, value_type, index);
-        StoreInst *store = builder->CreateStore(val, ptr);
+        Value *ptr = codegen_buffer_pointer(op->name, value_type, op->index);
+        StoreInst *store = builder->CreateAlignedStore(val, ptr, op->value.type().bytes());
         add_tbaa_metadata(store, op->name);
     } else {
-        int alignment = op->value.type().bits / 8;
+        int alignment = op->value.type().bytes();
         const Ramp *ramp = op->index.as<Ramp>();
         if (ramp && is_one(ramp->stride)) {
 
@@ -1553,13 +1791,12 @@ void CodeGen::visit(const Store *op) {
                 alignment *= 2;
             }
 
-            Value *base = codegen(ramp->base);
-            Value *ptr = codegen_buffer_pointer(op->name, value_type.element_of(), base);
+            Value *ptr = codegen_buffer_pointer(op->name, value_type.element_of(), ramp->base);
             Value *ptr2 = builder->CreatePointerCast(ptr, llvm_type_of(value_type)->getPointerTo());
             StoreInst *store = builder->CreateAlignedStore(val, ptr2, alignment);
             add_tbaa_metadata(store, op->name);
         } else if (ramp) {
-            Value *ptr = codegen_buffer_pointer(op->name, value_type.element_of(), codegen(ramp->base));
+            Value *ptr = codegen_buffer_pointer(op->name, value_type.element_of(), ramp->base);
             const IntImm *const_stride = ramp->stride.as<IntImm>();
             Value *stride = codegen(ramp->stride);
             // Scatter without generating the indices as a vector
@@ -1569,11 +1806,11 @@ void CodeGen::visit(const Store *op) {
                 if (const_stride) {
                     // Use a constant offset from the base pointer
                     Value *p = builder->CreateConstInBoundsGEP1_32(ptr, const_stride->value * i);
-                    StoreInst *store = builder->CreateAlignedStore(v, p, op->value.type().bits/8);
+                    StoreInst *store = builder->CreateAlignedStore(v, p, op->value.type().bytes());
                     add_tbaa_metadata(store, op->name);
                 } else {
                     // Increment the pointer by the stride for each element
-                    StoreInst *store = builder->CreateAlignedStore(v, ptr, op->value.type().bits/8);
+                    StoreInst *store = builder->CreateAlignedStore(v, ptr, op->value.type().bytes());
                     add_tbaa_metadata(store, op->name);
                     ptr = builder->CreateInBoundsGEP(ptr, stride);
                 }

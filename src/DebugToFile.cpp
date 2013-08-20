@@ -27,6 +27,8 @@ class DebugToFile : public IRMutator {
             Function f = iter->second;
             vector<Expr> args;
 
+            assert(op->types.size() == 1 && "debug_to_file doesn't handle functions with multiple values yet");
+
             // The name of the file
             args.push_back(Call::make(Int(32), f.debug_file(), vector<Expr>(), Call::Intrinsic));
 
@@ -38,27 +40,27 @@ class DebugToFile : public IRMutator {
             for (size_t i = 0; i < op->bounds.size(); i++) {
                 num_elements *= op->bounds[i].extent;
             }
-            args.push_back(Load::make(op->type, f.name(), 0, Buffer(), Parameter()));
-            args.push_back(Load::make(op->type, f.name(), num_elements-1, Buffer(), Parameter()));
+            args.push_back(Load::make(op->types[0], f.name(), 0, Buffer(), Parameter()));
+            args.push_back(Load::make(op->types[0], f.name(), num_elements-1, Buffer(), Parameter()));
 
-            // The header           
+            // The header
             for (size_t i = 0; i < op->bounds.size(); i++) {
                 if (i < 4) {
                     args.push_back(op->bounds[i].extent);
                 } else {
-                    args[args.size()-1] = (args[args.size()-1] * 
+                    args[args.size()-1] = (args[args.size()-1] *
                                            op->bounds[i].extent);
                 }
             }
-            while (args.size() < 7) args.push_back(1);            
+            while (args.size() < 7) args.push_back(1);
 
             int type_code = 0;
-            Type t = f.value().type();
+            Type t = f.values()[0].type();
             if (t == Float(32)) {
                 type_code = 0;
             } else if (t == Float(64)) {
                 type_code = 1;
-            } else if (t == UInt(8)) {
+            } else if (t == UInt(8) || t == UInt(1)) {
                 type_code = 2;
             } else if (t == Int(8)) {
                 type_code = 3;
@@ -78,16 +80,16 @@ class DebugToFile : public IRMutator {
                 assert(false && "Type not supported for debug_to_file");
             }
             args.push_back(type_code);
-            args.push_back(t.bits / 8);
+            args.push_back(t.bytes());
 
             Expr call = Call::make(Int(32), Call::debug_to_file, args, Call::Intrinsic);
 
-            Stmt body = AssertStmt::make(call == 0, 
-                                       "Failed to dump function " + 
+            Stmt body = AssertStmt::make(call == 0,
+                                       "Failed to dump function " +
                                        f.name() + " to file " + f.debug_file());
             body = Block::make(mutate(op->body), body);
-        
-            stmt = Realize::make(op->name, op->type, op->bounds, body);
+
+            stmt = Realize::make(op->name, op->types, op->bounds, body);
 
         } else {
             IRMutator::visit(op);

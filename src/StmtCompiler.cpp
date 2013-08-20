@@ -6,10 +6,11 @@
 #include <iostream>
 
 namespace Halide {
-namespace Internal {
 
 using std::string;
 using std::vector;
+
+namespace {
 
 #ifndef __arm__
 
@@ -44,7 +45,14 @@ static void cpuid(int info[4], int infoType, int extra) {
 
 #endif
 
-string get_native_x86_target() {
+#endif
+
+}
+
+string get_native_target() {
+#ifdef __arm__
+    return "arm";
+#else
      int info[4];
      cpuid(info, 1, 0);
 
@@ -103,31 +111,33 @@ string get_native_x86_target() {
                << info[3] << "\n";
      assert(false && "No SSE2 support, or failed to correctly interpret the result of cpuid.");
      return "";
-}
 #endif
+}
+
+string get_target() {
+    string native = get_native_target();
+#ifdef _WIN32
+    char target[128];
+    size_t read = 0;
+    getenv_s(&read, target, "HL_TARGET");
+    if (read) return target;
+    else return native;
+#else
+    char *target = getenv("HL_TARGET");
+    if (target) return target;
+    else return native;
+#endif
+}
+
+namespace Internal {
 
 StmtCompiler::StmtCompiler(string arch) {
-    #ifdef __arm__
-    const char *native = "arm";
-    #else
-    string native = get_native_x86_target();
-    #endif
-    if (arch.empty()) {
-        #ifdef _WIN32
-        char target[128];
-        size_t read = 0;
-        getenv_s(&read, target, "HL_TARGET");
-        if (read) arch = target;
-        else arch = native;
-        #else
-        char *target = getenv("HL_TARGET");
-        if (target) arch = target;
-        else arch = native;
-        #endif
-    }
-
-    if (arch.empty() || arch == "native") {
-        arch = native;
+    string native = get_native_target();
+    if (arch == "native") {
+        arch = get_native_target();
+    } else if (arch.empty()) {
+        // Use HL_TARGET.
+        arch = get_target();
     }
 
     if (arch == "x86-32") {
@@ -168,6 +178,8 @@ StmtCompiler::StmtCompiler(string arch) {
     else if (arch == "ptx") {
         // equivalent to "x86" on the host side, i.e. x86_64, no AVX
         contents = new CodeGen_GPU_Host(X86_64Bit | X86_SSE41 | GPU_PTX);
+    } else if (arch == "ptx-debug") {
+        contents = new CodeGen_GPU_Host(X86_64Bit | X86_SSE41 | GPU_PTX | GPU_debug);
     } else if (arch == "opencl") {
         // equivalent to "x86" on the host side, i.e. x86_64, no AVX
         contents = new CodeGen_GPU_Host(X86_64Bit | X86_SSE41 | GPU_OpenCL);
@@ -184,7 +196,7 @@ StmtCompiler::StmtCompiler(string arch) {
                   << "x86-32-nacl x86-32-sse41-nacl "
                   << "x86-64-nacl x86-64-sse41-nacl x86-64-avx-nacl "
                   << "arm arm-android arm-nacl"
-                  << "ptx opencl "
+                  << "ptx ptx-debug opencl"
                   << "native"
 		  << "\n"
                   << "On this machine, native means " << native << "\n";

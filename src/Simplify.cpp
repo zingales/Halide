@@ -7,6 +7,7 @@
 #include "Var.h"
 #include "Debug.h"
 #include "ModulusRemainder.h"
+#include "Substitute.h"
 #include <iostream>
 
 namespace Halide {
@@ -18,8 +19,9 @@ using std::pair;
 using std::make_pair;
 using std::ostringstream;
 
+// Immediates and broadcasts of immediates
 bool is_simple_const(Expr e) {
-    return is_const(e) && (!e.as<Cast>());
+    return (!e.as<Cast>()) && is_const(e);
 }
 
 // Is a constant representable as a certain type
@@ -1207,15 +1209,35 @@ class Simplify : public IRMutator {
         } else {
             Stmt rest = mutate(op->rest);
 
-            // Check if the first is a no-op
+            // Check if both halves start with a let statement.
+            const LetStmt *let_first = first.as<LetStmt>();
+            const LetStmt *let_rest = rest.as<LetStmt>();
+
+            // Check if first is a no-op.
             const AssertStmt *noop = first.as<AssertStmt>();
             if (noop && is_const(noop->condition, 1)) {
                 stmt = rest;
+            } else if (let_first && let_rest &&
+                       equal(let_first->value, let_rest->value)) {
+
+                // Do both first and rest start with the same let statement (occurs when unrolling).
+                Stmt new_block = mutate(Block::make(let_first->body, let_rest->body));
+
+                // We're just going to use the first name, so if the
+                // second name is different we need to rewrite it.
+                if (let_rest->name != let_first->name) {
+                    new_block = substitute(let_rest->name,
+                                           Variable::make(let_first->value.type(), let_first->name),
+                                           new_block);
+                }
+
+                stmt = LetStmt::make(let_first->name, let_first->value, new_block);
             } else if (op->first.same_as(first) && op->rest.same_as(rest)) {
                 stmt = op;
             } else {
                 stmt = Block::make(first, rest);
             }
+
         }
     }
 };

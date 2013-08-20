@@ -13,12 +13,19 @@
 #include "integer_division_table.h"
 #include "LLVM_Headers.h"
 
+#if WITH_ARM
 extern "C" unsigned char halide_internal_initmod_arm[];
 extern "C" int halide_internal_initmod_arm_length;
 extern "C" unsigned char halide_internal_initmod_arm_android[];
 extern "C" int halide_internal_initmod_arm_android_length;
+#else
+static void *halide_internal_initmod_arm = 0;
+static int halide_internal_initmod_arm_length = 0;
+static void *halide_internal_initmod_arm_android = 0;
+static int halide_internal_initmod_arm_android_length = 0;
+#endif
 
-#if WITH_NATIVE_CLIENT
+#if (WITH_NATIVE_CLIENT && WITH_ARM)
 extern "C" unsigned char halide_internal_initmod_arm_nacl[];
 extern "C" int halide_internal_initmod_arm_nacl_length;
 #else
@@ -38,7 +45,12 @@ using namespace llvm;
 CodeGen_ARM::CodeGen_ARM(uint32_t options) : CodeGen_Posix(),
 					     use_android(options & ARM_Android),
                                              use_nacl(options & ARM_NaCl) {
+    #if !(WITH_ARM)
+    assert(false && "arm not enabled for this build of Halide.");
+    #endif
+
     assert(llvm_ARM_enabled && "llvm build not configured with ARM target enabled.");
+
     #if !(WITH_NATIVE_CLIENT)
     assert(!use_nacl && "llvm build not configured with native client enabled.");
     #endif
@@ -119,6 +131,7 @@ Expr _u8(Expr e) {
     return cast(UInt(8, e.type().width), e);
 }
 
+/*
 Expr _f32(Expr e) {
     return cast(Float(32, e.type().width), e);
 }
@@ -126,6 +139,7 @@ Expr _f32(Expr e) {
 Expr _f64(Expr e) {
     return cast(Float(64, e.type().width), e);
 }
+*/
 
 // saturating cast operators
 Expr _i8q(Expr e) {
@@ -636,7 +650,7 @@ void CodeGen_ARM::visit(const Div *op) {
             shift      = IntegerDivision::table_u8[const_divisor-2][2];
         }
 
-        assert(method != 0 && 
+        assert(method != 0 &&
                "method 0 division is for powers of two and should have been handled elsewhere");
 
         Value *num = codegen(op->a);
@@ -952,10 +966,9 @@ void CodeGen_ARM::visit(const Store *op) {
         vector<Value *> args(call->args.size() + 2);
 
         Type t = call->args[0].type();
-        int alignment = t.bits / 8;
+        int alignment = t.bytes();
 
-        Value *index = codegen(ramp->base);
-        Value *ptr = codegen_buffer_pointer(op->name, call->type.element_of(), index);
+        Value *ptr = codegen_buffer_pointer(op->name, call->type.element_of(), ramp->base);
         ptr = builder->CreatePointerCast(ptr, i8->getPointerTo());
 
         args[0] = ptr; // The pointer
@@ -1006,8 +1019,8 @@ void CodeGen_ARM::visit(const Store *op) {
 
     llvm::Function *fn = module->getFunction(builtin.str());
     if (fn) {
-        Value *base = codegen_buffer_pointer(op->name, op->value.type().element_of(), codegen(ramp->base));
-        Value *stride = codegen(ramp->stride * (op->value.type().bits / 8));
+        Value *base = codegen_buffer_pointer(op->name, op->value.type().element_of(), ramp->base);
+        Value *stride = codegen(ramp->stride * op->value.type().bytes());
         Value *val = codegen(op->value);
 	debug(4) << "Creating call to " << builtin.str() << "\n";
         Instruction *store = builder->CreateCall(fn, vec(base, stride, val));
@@ -1059,11 +1072,11 @@ void CodeGen_ARM::visit(const Load *op) {
             base = simplify(base - offset);
         }
 
-        int alignment = op->type.bits / 8;
+        int alignment = op->type.bytes();
         //alignment *= gcd(gcd(mod_rem.modulus, mod_rem.remainder), 32);
         Value *align = ConstantInt::get(i32, alignment);
 
-        Value *ptr = codegen_buffer_pointer(op->name, op->type.element_of(), codegen(base));
+        Value *ptr = codegen_buffer_pointer(op->name, op->type.element_of(), base);
         ptr = builder->CreatePointerCast(ptr, i8->getPointerTo());
 
         vector<llvm::Type *> type_vec(stride->value);
@@ -1113,8 +1126,8 @@ void CodeGen_ARM::visit(const Load *op) {
 
     llvm::Function *fn = module->getFunction(builtin.str());
     if (fn) {
-        Value *base = codegen_buffer_pointer(op->name, op->type.element_of(), codegen(ramp->base));
-        Value *stride = codegen(ramp->stride * (op->type.bits / 8));
+        Value *base = codegen_buffer_pointer(op->name, op->type.element_of(), ramp->base);
+        Value *stride = codegen(ramp->stride * op->type.bytes());
 	debug(4) << "Creating call to " << builtin.str() << "\n";
         Instruction *load = builder->CreateCall(fn, vec(base, stride), builtin.str());
         add_tbaa_metadata(load, op->name);

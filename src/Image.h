@@ -6,6 +6,7 @@
  */
 
 #include "Buffer.h"
+#include "Tuple.h"
 
 namespace Halide {
 
@@ -27,7 +28,7 @@ private:
      * because the buffer is never modified
      */
     // @{
-    T *base;
+    T *origin;
     int stride_0, stride_1, stride_2, stride_3, dims;
     // @}
 
@@ -47,14 +48,20 @@ private:
         buffer.set_host_dirty(true);
 
         if (buffer.defined()) {
-            base = (T *)buffer.host_ptr();
+            origin = (T *)buffer.host_ptr();
             stride_0 = buffer.stride(0);
             stride_1 = buffer.stride(1);
             stride_2 = buffer.stride(2);
             stride_3 = buffer.stride(3);
+            // The host pointer points to the mins vec, but we want to
+            // point to the origin of the coordinate system.
+            origin -= (buffer.min(0) * stride_0 +
+                       buffer.min(1) * stride_1 +
+                       buffer.min(2) * stride_2 +
+                       buffer.min(3) * stride_3);
             dims = buffer.dimensions();
         } else {
-            base = NULL;
+            origin = NULL;
             stride_0 = stride_1 = stride_2 = stride_3 = 0;
             dims = 0;
         }
@@ -62,22 +69,55 @@ private:
 
 public:
     /** Construct an undefined image handle */
-    Image() : base(NULL), stride_0(0), stride_1(0), stride_2(0), stride_3(0), dims(0) {}
+    Image() : origin(NULL), stride_0(0), stride_1(0), stride_2(0), stride_3(0), dims(0) {}
 
     /** Allocate an image with the given dimensions. */
-    Image(int x, int y = 0, int z = 0, int w = 0) : buffer(Buffer(type_of<T>(), x, y, z, w)) {
+    // @{
+    Image(int x, int y = 0, int z = 0, int w = 0, const std::string &name = "") :
+        buffer(Buffer(type_of<T>(), x, y, z, w, NULL, name)) {
         prepare_for_direct_pixel_access();
     }
+
+    Image(int x, int y, int z, const std::string &name) :
+        buffer(Buffer(type_of<T>(), x, y, z, 0, NULL, name)) {
+        prepare_for_direct_pixel_access();
+    }
+
+    Image(int x, int y, const std::string &name) :
+        buffer(Buffer(type_of<T>(), x, y, 0, 0, NULL, name)) {
+        prepare_for_direct_pixel_access();
+    }
+
+    Image(int x, const std::string &name) :
+        buffer(Buffer(type_of<T>(), x, 0, 0, 0, NULL, name)) {
+        prepare_for_direct_pixel_access();
+    }
+    // @}
 
     /** Wrap a buffer in an Image object, so that we can directly
      * access its pixels in a type-safe way. */
     Image(const Buffer &buf) : buffer(buf) {
+        if (type_of<T>() != buffer.type()) {
+            std::cerr << "Can't construct Image of type " << type_of<T>()
+                      << " from buffer of type " << buffer.type() << '\n';
+            assert(false);
+        }
+        prepare_for_direct_pixel_access();
+    }
+
+    /** Wrap a single-element realization in an Image object. */
+    Image(const Realization &r) : buffer(r) {
+        if (type_of<T>() != buffer.type()) {
+            std::cerr << "Can't construct Image of type " << type_of<T>()
+                      << " from buffer of type " << buffer.type() << '\n';
+            assert(false);
+        }
         prepare_for_direct_pixel_access();
     }
 
     /** Wrap a buffer_t in an Image object, so that we can access its
      * pixels. */
-    Image(const buffer_t *b) : buffer(type_of<T>(), b) {
+    Image(const buffer_t *b, const std::string &name = "") : buffer(type_of<T>(), b, name) {
         prepare_for_direct_pixel_access();
     }
 
@@ -110,8 +150,25 @@ public:
     /** Get the size of a dimension */
     int extent(int dim) const {
         assert(defined());
-        assert(dim >= 0 && dim < 4 && "We only support 4-dimensional buffers for now");
+        assert(dim >= 0 && dim < dims && "dimension out of bounds in call to Image::extent");
         return buffer.extent(dim);
+    }
+
+    /** Get the min coordinate of a dimension. The top left of the
+     * image represents this point in a function that was realized
+     * into this image. */
+    int min(int dim) const {
+        assert(defined());
+        assert(dim >= 0 && dim < dims && "dimension out of bounds in call to Image::min");
+        return buffer.min(dim);
+    }
+
+    /** Set the min coordinates of a dimension. */
+    void set_min(int m0, int m1 = 0, int m2 = 0, int m3 = 0) {
+        assert(defined());
+        buffer.set_min(m0, m1, m2, m3);
+        // Move the origin
+        prepare_for_direct_pixel_access();
     }
 
     /** Get the number of elements in the buffer between two adjacent
@@ -121,7 +178,7 @@ public:
      * though. */
     int stride(int dim) const {
         assert(defined());
-        assert(dim >= 0 && dim < 4 && "We only support 4-dimensional buffers for now");
+        assert(dim >= 0 && dim < dims && "dimension out of bounds in call to Image::stride");
         return buffer.stride(dim);
     }
 
@@ -143,57 +200,62 @@ public:
         return extent(2);
     }
 
-    /** Get a pointer to the first element. */
+    /** Get a pointer to the element at the min location. */
     T *data() const {
-        return base;
+        assert(defined());
+        T *ptr = origin;
+        for (int i = 0; i < dims; i++) {
+            ptr += min(i) * stride(i);
+        }
+        return ptr;
     }
 
     /** Assuming this image is one-dimensional, get the value of the
      * element at position x */
     T operator()(int x) const {
-        return base[x];
+        return origin[x];
     }
 
     /** Assuming this image is two-dimensional, get the value of the
      * element at position (x, y) */
     T operator()(int x, int y) const {
-        return base[x*stride_0 + y*stride_1];
+        return origin[x*stride_0 + y*stride_1];
     }
 
     /** Assuming this image is three-dimensional, get the value of the
      * element at position (x, y, z) */
     T operator()(int x, int y, int z) const {
-        return base[x*stride_0 + y*stride_1 + z*stride_2];
+        return origin[x*stride_0 + y*stride_1 + z*stride_2];
     }
 
     /** Assuming this image is four-dimensional, get the value of the
      * element at position (x, y, z, w) */
     T operator()(int x, int y, int z, int w) const {
-        return base[x*stride_0 + y*stride_1 + z*stride_2 + w*stride_3];
+        return origin[x*stride_0 + y*stride_1 + z*stride_2 + w*stride_3];
     }
 
     /** Assuming this image is one-dimensional, get a reference to the
      * element at position x */
     T &operator()(int x) {
-        return base[x*stride_0];
+        return origin[x*stride_0];
     }
 
     /** Assuming this image is two-dimensional, get a reference to the
      * element at position (x, y) */
     T &operator()(int x, int y) {
-        return base[x*stride_0 + y*stride_1];
+        return origin[x*stride_0 + y*stride_1];
     }
 
     /** Assuming this image is three-dimensional, get a reference to the
      * element at position (x, y, z) */
     T &operator()(int x, int y, int z) {
-        return base[x*stride_0 + y*stride_1 + z*stride_2];
+        return origin[x*stride_0 + y*stride_1 + z*stride_2];
     }
 
     /** Assuming this image is four-dimensional, get a reference to the
      * element at position (x, y, z, w) */
     T &operator()(int x, int y, int z, int w) {
-        return base[x*stride_0 + y*stride_1 + z*stride_2 + w*stride_3];
+        return origin[x*stride_0 + y*stride_1 + z*stride_2 + w*stride_3];
     }
 
     /** Construct an expression which loads from this image. The

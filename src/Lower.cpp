@@ -88,22 +88,109 @@ Expr qualify_expr(string prefix, Expr value) {
 }
 
 // Build a loop nest about a provide node using a schedule
-Stmt build_provide_loop_nest(string buffer, string prefix, vector<Expr> site, Expr value, const Schedule &s) {
+Stmt build_provide_loop_nest(string buffer, string prefix,
+                             const vector<Expr> &site,
+                             const vector<Expr> &values,
+                             const Schedule &s) {
     // We'll build it from inside out, starting from a store node,
     // then wrapping it in for loops.
 
-    // Make the (multi-dimensional) store node
-    Stmt stmt = Provide::make(buffer, value, site);
+    // Make the (multi-dimensional) store nodes
+    assert(!values.empty());
+    Stmt stmt = Provide::make(buffer, values, site);
+
+    // The dimensions for which we have a known static size.
+    map<string, Expr> known_size_dims;
+    // First hunt through the bounds for them.
+    for (size_t i = 0; i < s.bounds.size(); i++) {
+        known_size_dims[s.bounds[i].var] = s.bounds[i].extent;
+    }
+
+    // TODO: Check that the dimensions post-splitting will have unique
+    // names. Otherwise the rebalancing just makes things more
+    // confused.
+
+    vector<Schedule::Split> splits = s.splits;
+
+    // Rebalance the split tree to make the outermost split first.
+    for (size_t i = 0; i < splits.size(); i++) {
+        for (size_t j = i+1; j < splits.size(); j++) {
+
+            // Given two splits:
+            // X  ->  a * Xo  + Xi
+            // (splits stuff other than Xo, including Xi)
+            // Xo ->  b * Xoo + Xoi
+
+            // Re-write to:
+            // X  -> ab * Xoo + s0
+            // s0 ->  a * Xoi + Xi
+            // (splits on stuff other than Xo, including Xi)
+
+            // The name Xo went away, because it was legal for it to
+            // be X before, but not after.
+
+            Schedule::Split &first = splits[i];
+            Schedule::Split &second = splits[j];
+            if (first.outer == second.old_var) {
+                second.old_var = unique_name('s');
+                first.outer   = second.outer;
+                second.outer  = second.inner;
+                second.inner  = first.inner;
+                first.inner   = second.old_var;
+                Expr f = simplify(first.factor * second.factor);
+                second.factor = first.factor;
+                first.factor  = f;
+                // Push the second split back to just after the first
+                for (size_t k = j; k > i+1; k--) {
+                    std::swap(splits[k], splits[k-1]);
+                }
+            }
+        }
+    }
 
     // Define the function args in terms of the loop variables using the splits
-    for (size_t i = 0; i < s.splits.size(); i++) {
-        const Schedule::Split &split = s.splits[i];
+    for (size_t i = 0; i < splits.size(); i++) {
+        const Schedule::Split &split = splits[i];
         Expr outer = Variable::make(Int(32), prefix + split.outer);
         if (!split.is_rename) {
             Expr inner = Variable::make(Int(32), prefix + split.inner);
             Expr old_min = Variable::make(Int(32), prefix + split.old_var + ".min");
-            // stmt = LetStmt::make(prefix + split.old_var, outer * split.factor + inner + old_min, stmt);
-            stmt = substitute(prefix + split.old_var, outer * split.factor + inner + old_min, stmt);
+            Expr old_extent = Variable::make(Int(32), prefix + split.old_var + ".extent");
+
+            known_size_dims[split.inner] = split.factor;
+
+            // Assuming for the moment that the original min is zero,
+            // the starting index for the inner loop should be:
+            Expr base = outer * split.factor;
+
+            map<string, Expr>::iterator iter = known_size_dims.find(split.old_var);
+            if (iter != known_size_dims.end() &&
+                is_zero(simplify(iter->second % split.factor))) {
+                // We have proved that the split factor divides the
+                // old extent. No need to adjust the base.
+                known_size_dims[split.outer] = iter->second / split.factor;
+            } else {
+                // The split factor may not divide the old extent, and
+                // we don't want to needlessly go beyond the original
+                // extent, or we get bounds expansion and do a lot of
+                // redundant compute, so push it backwards a little.
+                base = Min::make(base, old_extent - split.factor);
+
+                // Split it off into a variable, as there are few
+                // peephole simplification opportunities through a
+                // min.
+                string name = prefix + split.inner + ".base";
+                stmt = LetStmt::make(name, base, stmt);
+                base = Variable::make(Int(32), name);
+
+                // Perhaps we'd rather round up than go less than the
+                // original min, so we can push it forwards a little. I
+                // don't think this matters, so I'll leave it out for now.
+                // base = Max::make(base, 0);
+            }
+
+            // stmt = LetStmt::make(prefix + split.old_var, base + inner + old_min, stmt);
+            stmt = substitute(prefix + split.old_var, base + inner + old_min, stmt);
         } else {
             stmt = substitute(prefix + split.old_var, outer, stmt);
         }
@@ -119,8 +206,8 @@ Stmt build_provide_loop_nest(string buffer, string prefix, vector<Expr> site, Ex
 
     // Define the bounds on the split dimensions using the bounds
     // on the function args
-    for (size_t i = s.splits.size(); i > 0; i--) {
-        const Schedule::Split &split = s.splits[i-1];
+    for (size_t i = splits.size(); i > 0; i--) {
+        const Schedule::Split &split = splits[i-1];
         Expr old_var_extent = Variable::make(Int(32), prefix + split.old_var + ".extent");
         Expr old_var_min = Variable::make(Int(32), prefix + split.old_var + ".min");
         if (!split.is_rename) {
@@ -151,30 +238,37 @@ Stmt build_produce(Function f) {
 
     // Compute the site to store to as the function args
     vector<Expr> site;
-    Expr value = qualify_expr(prefix, f.value());
+
+    vector<Expr> values(f.values().size());
+    for (size_t i = 0; i < values.size(); i++) {
+        values[i] = qualify_expr(prefix, f.values()[i]);
+    }
 
     for (size_t i = 0; i < f.args().size(); i++) {
         site.push_back(Variable::make(Int(32), f.name() + "." + f.args()[i]));
     }
 
-    return build_provide_loop_nest(f.name(), prefix, site, value, f.schedule());
+    return build_provide_loop_nest(f.name(), prefix, site, values, f.schedule());
 }
 
 // Build the loop nest that updates a function (assuming it's a reduction).
 Stmt build_update(Function f) {
-    if (!f.is_reduction()) return Stmt();
+    if (!f.has_reduction_definition()) return Stmt();
 
     string prefix = f.name() + ".";
 
     vector<Expr> site;
-    Expr value = qualify_expr(prefix, f.reduction_value());
+    vector<Expr> values(f.reduction_values().size());
+    for (size_t i = 0; i < values.size(); i++) {
+        values[i] = qualify_expr(prefix, f.reduction_values()[i]);
+    }
 
     for (size_t i = 0; i < f.reduction_args().size(); i++) {
         site.push_back(qualify_expr(prefix, f.reduction_args()[i]));
         debug(2) << "Reduction site " << i << " = " << site[i] << "\n";
     }
 
-    Stmt loop = build_provide_loop_nest(f.name(), prefix, site, value, f.reduction_schedule());
+    Stmt loop = build_provide_loop_nest(f.name(), prefix, site, values, f.reduction_schedule());
 
     // Now define the bounds on the reduction domain
     const vector<ReductionVariable> &dom = f.reduction_domain().domain();
@@ -192,11 +286,25 @@ pair<Stmt, Stmt> build_realization(Function func) {
     Stmt update = build_update(func);
 
     if (update.defined()) {
-        // Expand the bounds computed in the produce step
-        // using the bounds read in the update step. This is
-        // necessary because later bounds inference does not
-        // consider the bounds read during an update step
-        Region bounds = region_called(update, func.name());
+        // Expand the bounds computed in the produce step using the
+        // bounds read in the update step. This is necessary because
+        // later bounds inference does not consider the bounds read
+        // during an update step, the bounds computed in the produce
+        // step must cover all pixels touched in the update step or
+        // bounds inference is wrong. TODO: don't actually compute all
+        // the pixels in the produce step if they're just going to get
+        // clobbered, or if they never get read in the update step.
+        Region bounds = region_touched(update, func.name());
+        for (size_t i = 0; i < bounds.size(); i++) {
+            if (!bounds[i].min.defined() || !bounds[i].extent.defined()) {
+                std::cerr << "Error: The region of " << func.name()
+                          << " accessed in its reduction definition "
+                          << "is unbounded in dimension " << i << ".\n"
+                          << "Consider introducing clamp operators.\n";
+                assert(false);
+            }
+        }
+
         if (!bounds.empty()) {
             assert(bounds.size() == func.args().size());
             // Expand the region to be computed using the region read in the update step
@@ -320,7 +428,12 @@ private:
         }
 
         // Change the body of the for loop to do an allocation
-        s = Realize::make(func.name(), func.value().type(), bounds, s);
+        vector<Type> types(func.values().size());
+        for (size_t i = 0; i < types.size(); i++) {
+            types[i] = func.values()[i].type();
+        }
+        s = Realize::make(func.name(), types, bounds, s);
+
 
         return inject_explicit_bounds(s, func);
     }
@@ -337,7 +450,7 @@ private:
         // Can't schedule things inside a vector for loop
         if (for_loop->for_type != For::Vectorized) {
             body = mutate(for_loop->body);
-        } else if (func.is_reduction() &&
+        } else if (func.has_reduction_definition() &&
                    func.schedule().compute_level.is_inline() &&
                    function_is_called_in_stmt(func, for_loop)) {
             // If we're trying to inline a reduction, schedule it here and bail out
@@ -382,7 +495,7 @@ private:
     // If we're an inline reduction, we may need to inject a realization here
     virtual void visit(const Provide *op) {
         if (op->name != func.name() &&
-            func.is_reduction() &&
+            func.has_reduction_definition() &&
             func.schedule().compute_level.is_inline() &&
             function_is_called_in_stmt(func, op)) {
             debug(2) << "Injecting realization of " << func.name() << " around node " << Stmt(op) << "\n";
@@ -400,7 +513,7 @@ class InlineFunction : public IRMutator {
     bool found;
 public:
     InlineFunction(Function f) : func(f), found(false) {
-        assert(!f.is_reduction());
+        assert(!f.has_reduction_definition());
     }
 private:
     using IRMutator::visit;
@@ -414,7 +527,7 @@ private:
                 args[i] = mutate(op->args[i]);
             }
             // Grab the body
-            Expr body = qualify_expr(func.name() + ".", func.value());
+            Expr body = qualify_expr(func.name() + ".", func.values()[op->value_index]);
 
 
             // Bind the args using Let nodes
@@ -422,8 +535,8 @@ private:
 
             for (size_t i = 0; i < args.size(); i++) {
                 body = Let::make(func.name() + "." + func.args()[i],
-                               args[i],
-                               body);
+                                 args[i],
+                                 body);
             }
 
             expr = body;
@@ -518,13 +631,23 @@ void populate_environment(Function f, map<string, Function> &env, bool recursive
     }
 
     FindCalls calls;
-    f.value().accept(&calls);
+    for (size_t i = 0; i < f.values().size(); i++) {
+        f.values()[i].accept(&calls);
+    }
 
     // Consider reductions
-    if (f.is_reduction()) {
-        f.reduction_value().accept(&calls);
+    if (f.has_reduction_definition()) {
+        for (size_t i = 0; i < f.reduction_values().size(); i++) {
+            f.reduction_values()[i].accept(&calls);
+        }
         for (size_t i = 0; i < f.reduction_args().size(); i++) {
             f.reduction_args()[i].accept(&calls);
+        }
+
+        ReductionDomain d = f.reduction_domain();
+        for (size_t i = 0; i < d.domain().size(); i++) {
+            d.domain()[i].min.accept(&calls);
+            d.domain()[i].extent.accept(&calls);
         }
     }
 
@@ -620,7 +743,8 @@ Stmt schedule_functions(Stmt s, const vector<string> &order,
             assert(false);
         }
 
-        if (!f.is_reduction() && f.schedule().compute_level.is_inline()) {
+        if (!f.has_reduction_definition() &&
+            f.schedule().compute_level.is_inline()) {
             debug(1) << "Inlining " << order[i-1] << '\n';
             s = InlineFunction(f).mutate(s);
         } else {
@@ -713,11 +837,17 @@ Stmt add_image_checks(Stmt s, Function f) {
     s.accept(&finder);
     map<string, FindBuffers::Result> bufs = finder.buffers;
 
-    // Add the output buffer
-    FindBuffers::Result output_buffer;
-    output_buffer.type = f.value().type();
-    output_buffer.param = f.output_buffer();
-    bufs[f.name()] = output_buffer;
+    // Add the output buffer(s)
+    for (size_t i = 0; i < f.values().size(); i++) {
+        FindBuffers::Result output_buffer;
+        output_buffer.type = f.values()[i].type();
+        output_buffer.param = f.output_buffers()[i];
+        if (f.values().size() > 1) {
+            bufs[f.name() + '.' + int_to_string(i)] = output_buffer;
+        } else {
+            bufs[f.name()] = output_buffer;
+        }
+    }
 
     // Now compute what regions of each buffer are touched
     map<string, Region> regions = regions_touched(s);
@@ -746,7 +876,9 @@ Stmt add_image_checks(Stmt s, Function f) {
          iter != bufs.end(); ++iter) {
         const string &name = iter->first;
 
-        for (char dim = '0'; dim < '4'; dim++) {
+        for (int i = 0; i < 4; i++) {
+            string dim = int_to_string(i);
+
             Expr min_required = Variable::make(Int(32), name + ".min." + dim + ".required");
             replace_with_required[name + ".min." + dim] = min_required;
 
@@ -770,7 +902,24 @@ Stmt add_image_checks(Stmt s, Function f) {
         Buffer &image = iter->second.image;
         Parameter &param = iter->second.param;
         Type type = iter->second.type;
-        const Region &region = regions[name];
+
+        // Detect if this is one of the outputs of a multi-output pipeline.
+        bool is_tuple_output_buffer = false;
+        bool is_secondary_output_buffer = false;
+        for (size_t i = 0; i < f.output_buffers().size(); i++) {
+            if (param.defined() &&
+                param.same_as(f.output_buffers()[i])) {
+                is_tuple_output_buffer = true;
+                if (i > 0) {
+                    is_secondary_output_buffer = true;
+                }
+            }
+        }
+
+
+        // If we're one of multiple output buffers, we should use the
+        // region inferred for the output Func.
+        const Region &region = regions[is_tuple_output_buffer ? f.name() : name];
 
         // An expression returning whether or not we're in inference mode
         Expr inference_mode = Variable::make(UInt(1), name + ".host_and_dev_are_null");
@@ -781,7 +930,7 @@ Stmt add_image_checks(Stmt s, Function f) {
         {
             string elem_size_name = name + ".elem_size";
             Expr elem_size = Variable::make(Int(32), elem_size_name);
-            int correct_size = type.bits / 8;
+            int correct_size = type.bytes();
             ostringstream error_msg;
             error_msg << "Element size for " << name << " should be " << correct_size;
             asserts_elem_size.push_back(AssertStmt::make(elem_size == correct_size, error_msg.str()));
@@ -790,7 +939,7 @@ Stmt add_image_checks(Stmt s, Function f) {
         // Check that the region passed in (after applying constraints) is within the region used
         debug(3) << "In image " << name << " region touched is:\n";
         for (size_t j = 0; j < region.size(); j++) {
-            char dim = '0' + j;
+            string dim = int_to_string(j);
             debug(3) << region[j].min << ", " << region[j].extent << "\n";
             string actual_min_name = name + ".min." + dim;
             string actual_extent_name = name + ".extent." + dim;
@@ -823,11 +972,12 @@ Stmt add_image_checks(Stmt s, Function f) {
             // order (e.g if storage is swizzled relative to dimension
             // order).
             Expr stride_required;
-            if (dim == '0') {
+            if (j == 0) {
                 stride_required = 1;
             } else {
-                stride_required = (Variable::make(Int(32), name + ".stride." + (char)(dim-1) + ".required") *
-                                   Variable::make(Int(32), name + ".extent." + (char)(dim-1) + ".required"));
+                string last_dim = int_to_string(j-1);
+                stride_required = (Variable::make(Int(32), name + ".stride." + last_dim + ".required") *
+                                   Variable::make(Int(32), name + ".extent." + last_dim + ".required"));
             }
             lets_required.push_back(make_pair(name + ".stride." + dim + ".required", stride_required));
         }
@@ -836,7 +986,7 @@ Stmt add_image_checks(Stmt s, Function f) {
         Expr buffer_name = Call::make(Int(32), name, vector<Expr>(), Call::Intrinsic);
         vector<Expr> args = vec(inference_mode, buffer_name, Expr(type.bits/8));
         for (size_t i = 0; i < 4; i++) {
-            char dim = '0' + i;
+            string dim = int_to_string(i);
             if (i < region.size()) {
                 args.push_back(Variable::make(Int(32), name + ".min." + dim + ".proposed"));
                 args.push_back(Variable::make(Int(32), name + ".extent." + dim + ".proposed"));
@@ -853,7 +1003,7 @@ Stmt add_image_checks(Stmt s, Function f) {
         // Build the constraints tests and proposed sizes.
         vector<pair<string, Expr> > constraints;
         for (size_t i = 0; i < region.size(); i++) {
-            char dim = '0' + i;
+            string dim = int_to_string(i);
             string min_name = name + ".min." + dim;
             string stride_name = name + ".stride." + dim;
             string extent_name = name + ".extent." + dim;
@@ -872,7 +1022,27 @@ Stmt add_image_checks(Stmt s, Function f) {
             Expr extent_proposed = Variable::make(Int(32), extent_name + ".proposed");
             Expr min_proposed = Variable::make(Int(32), min_name + ".proposed");
 
-            if (image.defined() && (int)i < image.dimensions()) {
+            debug(2) << "Injecting constraints for " << name << "." << i << "\n";
+            if (is_secondary_output_buffer) {
+                // For multi-output (Tuple) pipelines, output buffers
+                // beyond the first implicitly have their min and extent
+                // constrained to match the first output.
+
+                if (param.defined()) {
+                    assert(!param.extent_constraint(i).defined() &&
+                           !param.min_constraint(i).defined() &&
+                           "Can't constrain the min or extent of an output buffer beyond the "
+                           "first. They are implicitly constrained to have the same min and extent "
+                           "as the first output buffer.");
+
+                    stride_constrained = param.stride_constraint(i);
+                } else if (image.defined() && (int)i < image.dimensions()) {
+                    stride_constrained = image.stride(i);
+                }
+
+                min_constrained = Variable::make(Int(32), f.name() + ".0.min." + dim);
+                extent_constrained = Variable::make(Int(32), f.name() + ".0.extent." + dim);
+            } else if (image.defined() && (int)i < image.dimensions()) {
                 stride_constrained = image.stride(i);
                 extent_constrained = image.extent(i);
                 min_constrained = image.min(i);

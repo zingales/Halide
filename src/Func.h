@@ -16,6 +16,7 @@
 #include "JITCompiledModule.h"
 #include "Image.h"
 #include "Util.h"
+#include "Tuple.h"
 
 namespace Halide {
 
@@ -24,15 +25,21 @@ namespace Halide {
  * definition, or it could be a call to a function. We don't know
  * until we see how this object gets used.
  */
+class FuncRefExpr;
+
 class FuncRefVar {
     Internal::Function func;
     std::vector<std::string> args;
-    void add_implicit_vars(std::vector<std::string> &args, Expr e) const;
+    void add_implicit_vars(std::vector<std::string> &args, const std::vector<Expr> &e) const;
 public:
     FuncRefVar(Internal::Function, const std::vector<Var> &);
 
-    /**  Use this as the left-hand-side of a definition */
+    /**  Use this as the left-hand-side of a definition. */
     EXPORT void operator=(Expr);
+
+    /** Use this as the left-hand-side of a definition for a Func with
+     * multiple outputs. */
+    EXPORT void operator=(const Tuple &);
 
     /** Define this function as a sum reduction over the negative of
      * the given expression. The expression should refer to some RDom
@@ -65,12 +72,24 @@ public:
     /** Override the usual assignment operator, so that
      * f(x, y) = g(x, y) defines f.
      */
-    void operator=(const FuncRefVar &e) {*this = Expr(e);}
+    // @{
+    void operator=(const FuncRefVar &e);
+    void operator=(const FuncRefExpr &e);
+    // @}
 
     /** Use this FuncRefVar as a call to the function, and not as the
-     * left-hand-side of a definition.
+     * left-hand-side of a definition. Only works for single-output
+     * funcs.
      */
     EXPORT operator Expr() const;
+
+    /** When a FuncRefVar refers to a function that provides multiple
+     * outputs, you can access each output as an Expr using
+     * operator[] */
+    EXPORT Expr operator[](int) const;
+
+    /** How many outputs does the function this refers to produce. */
+    size_t size() const;
 };
 
 /** A fragment of front-end syntax of the form f(x, y, z), where x, y,
@@ -81,7 +100,7 @@ public:
 class FuncRefExpr {
     Internal::Function func;
     std::vector<Expr> args;
-    void add_implicit_vars(std::vector<Expr> &args, Expr e) const;
+    void add_implicit_vars(std::vector<Expr> &args, const std::vector<Expr> &e) const;
 public:
     FuncRefExpr(Internal::Function, const std::vector<Expr> &);
     FuncRefExpr(Internal::Function, const std::vector<std::string> &);
@@ -90,6 +109,10 @@ public:
      * \ref RDom). The function must already have a pure definition.
      */
     EXPORT void operator=(Expr);
+
+    /** Use this as the left-hand-side of a reduction definition for a
+     * Func with multiple outputs. */
+    EXPORT void operator=(const Tuple &);
 
     /** Define this function as a sum reduction over the negative of
      * the given expression. The expression should refer to some RDom
@@ -122,11 +145,23 @@ public:
     /* Override the usual assignment operator, so that
      * f(x, y) = g(x, y) defines f.
      */
-    void operator=(const FuncRefExpr &e) {*this = Expr(e);}
+    // @{
+    void operator=(const FuncRefVar &);
+    void operator=(const FuncRefExpr &);
+    // @}
 
     /** Use this as a call to the function, and not the left-hand-side
-     * of a definition. */
+     * of a definition. Only works for single-output Funcs. */
     EXPORT operator Expr() const;
+
+    /** When a FuncRefExpr refers to a function that provides multiple
+     * outputs, you can access each output as an Expr using
+     * operator[].
+     */
+    EXPORT Expr operator[](int) const;
+
+    /** How many outputs does the function this refers to produce. */
+    size_t size() const;
 };
 
 /** A wrapper around a schedule used for common schedule manipulations */
@@ -263,6 +298,10 @@ public:
 
 };
 
+
+
+
+
 /** A halide function. This class represents one stage in a Halide
  * pipeline, and is the unit by which we schedule things. By default
  * they are aggressively inlined, so you are encouraged to make lots
@@ -293,7 +332,7 @@ class Func {
 
     /** The current error handler used for realizing this
      * function. May be NULL. Only relevant when jitting. */
-    void (*error_handler)(char *);
+    void (*error_handler)(const char *);
 
     /** The current custom allocator used for realizing this
      * function. May be NULL. Only relevant when jitting. */
@@ -350,24 +389,40 @@ public:
     //@}
 
     /** Evaluate this function over some rectangular domain and return
-     * the resulting buffer. The buffer should probably be instantly
-     * wrapped in an Image class of the appropriate type. That is, do
-     * this:
+     * the resulting buffer or buffers. The buffer should probably be
+     * instantly wrapped in an Image class of the appropriate
+     * type. That is, do this:
      *
+     * f(x) = sin(x);
      * Image<float> im = f.realize(...);
      *
      * not this:
      *
+     * f(x) = sin(x)
      * Buffer im = f.realize(...)
      *
+     * If your Func has multiple values, because you defined it using
+     * a Tuple, then casting the result of a realize call to a buffer
+     * or image will produce a run-time errorInstead you should do the
+     * following:
+     *
+     * f(x) = Tuple(x, sin(x));
+     * Realization r = f.realize(...);
+     * Image<int> im0 = r[0];
+     * Image<float> im1 = r[1];
+     *
      */
-    EXPORT Buffer realize(int x_size = 0, int y_size = 0, int z_size = 0, int w_size = 0);
+    EXPORT Realization realize(int x_size = 0, int y_size = 0, int z_size = 0, int w_size = 0);
 
-    /** Evaluate this function into an existing allocated buffer. If
-     * the buffer is also one of the arguments to the function,
-     * strange things may happen, as the pipeline isn't necessarily
-     * safe to run in-place. */
+    /** Evaluate this function into an existing allocated buffer or
+     * buffers. If the buffer is also one of the arguments to the
+     * function, strange things may happen, as the pipeline isn't
+     * necessarily safe to run in-place. If you pass multiple buffers,
+     * they must have matching sizes. */
+    // @{
+    EXPORT void realize(Realization dst);
     EXPORT void realize(Buffer dst);
+    // @}
 
     /** For a given size of output, or a given output buffer,
      * determine the bounds required of all unbound ImageParams
@@ -376,6 +431,7 @@ public:
      * ImageParams. */
     // @{
     EXPORT void infer_input_bounds(int x_size = 0, int y_size = 0, int z_size = 0, int w_size = 0);
+    EXPORT void infer_input_bounds(Realization dst);
     EXPORT void infer_input_bounds(Buffer dst);
     // @}
 
@@ -444,11 +500,11 @@ public:
      * statically, you can also just define your own function with
      * signature
      \code
-     extern "C" halide_error(char *)
+     extern "C" halide_error(const char *)
      \endcode
      * This will clobber Halide's version.
      */
-    EXPORT void set_error_handler(void (*handler)(char *));
+    EXPORT void set_error_handler(void (*handler)(const char *));
 
     /** Set a custom malloc and free for halide to use. Malloc should
      * return 32-byte aligned chunks of memory, with 32-bytes extra
@@ -528,17 +584,31 @@ public:
     EXPORT std::vector<Var> args() const;
 
     /** The right-hand-side value of the pure definition of this
-     * function. May be undefined if the function has no pure
-     * definition yet. */
+     * function. Causes an error if there's no pure definition, or if
+     * the function is defined to return multiple values. */
     EXPORT Expr value() const;
+
+    /** The values returned by this function. An error if the function
+     * has not been been defined. Returns a Tuple with one element for
+     * functions defined to return a single value. */
+    EXPORT Tuple values() const;
+
+    /** Does this function have at least a pure definition. */
+    EXPORT bool defined() const;
 
     /** Get the left-hand-side of the reduction definition. An empty
      * vector if there's no reduction definition. */
     EXPORT const std::vector<Expr> &reduction_args() const;
 
-    /** Get the right-hand-side of the reduction definition. Returns
-     * undefined Expr if there's no reduction definition. */
+    /** Get the right-hand-side of the reduction definition. An error
+     * if there's no reduction definition. */
     EXPORT Expr reduction_value() const;
+
+    /** Get the right-hand-side of the reduction definition for
+     * functions that returns multiple values. An error if there's no
+     * reduction definition. Returns a Tuple with one element for
+     * functions that return a single value. */
+    EXPORT Tuple reduction_values() const;
 
     /** Get the reduction domain for the reduction definition. Returns
      * an undefined RDom if there's no reduction definition. */
@@ -888,7 +958,10 @@ public:
     /** Get a handle on the output buffer for this Func. Only relevant
      * if this is the output Func in a pipeline. Useful for making
      * static promises about strides, mins, and extents. */
+    // @{
     OutputImageParam output_buffer() const;
+    std::vector<OutputImageParam> output_buffers() const;
+    // @}
 
     /** Casting a function to an expression is equivalent to calling
      * the function with zero arguments. Implicit variables will be
@@ -931,6 +1004,59 @@ public:
     */
 };
 
+/** JIT-Compile and run enough code to evaluate a Halide
+ * expression. This can be thought of as a scalar version of
+ * \ref Func::realize */
+template<typename T>
+T evaluate(Expr e) {
+    assert(e.type() == type_of<T>());
+    Func f;
+    f() = e;
+    Image<T> im = f.realize();
+    return im(0);
+}
+
+/** JIT-compile and run enough code to evaluate a Halide Tuple. */
+// @{
+template<typename A, typename B>
+void evaluate(Tuple t, A *a, B *b) {
+    assert(t[0].type() == type_of<A>());
+    assert(t[1].type() == type_of<B>());
+    Func f;
+    f() = t;
+    Realization r = f.realize();
+    *a = Image<A>(r[0])(0);
+    *b = Image<B>(r[1])(0);
+}
+
+template<typename A, typename B, typename C>
+void evaluate(Tuple t, A *a, B *b, C *c) {
+    assert(t[0].type() == type_of<A>());
+    assert(t[1].type() == type_of<B>());
+    assert(t[2].type() == type_of<C>());
+    Func f;
+    f() = t;
+    Realization r = f.realize();
+    *a = Image<A>(r[0])(0);
+    *b = Image<B>(r[1])(0);
+    *c = Image<C>(r[2])(0);
+}
+
+template<typename A, typename B, typename C, typename D>
+void evaluate(Tuple t, A *a, B *b, C *c, D *d) {
+    assert(t[0].type() == type_of<A>());
+    assert(t[1].type() == type_of<B>());
+    assert(t[2].type() == type_of<C>());
+    assert(t[3].type() == type_of<D>());
+    Func f;
+    f() = t;
+    Realization r = f.realize();
+    *a = Image<A>(r[0])(0);
+    *b = Image<B>(r[1])(0);
+    *c = Image<C>(r[2])(0);
+    *d = Image<D>(r[3])(0);
+}
+// @}
 
 }
 
