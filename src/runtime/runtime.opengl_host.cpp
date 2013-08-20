@@ -44,7 +44,7 @@ extern "C" {
         if((errCode = glGetError()) != GL_NO_ERROR)                     \
             fprintf (stderr, "OpenGL Error at line %d: 0x%04x\n", __LINE__, (unsigned int) errCode); \
     }
-#define SAY_HI() printf("hi %s()!\n",  __PRETTY_FUNCTION__)
+#define SAY_HI() printf("   HI %s!\n",  __PRETTY_FUNCTION__)
 #else
 #define CHECK_ERROR()
 #define SAY_HI() 
@@ -121,6 +121,16 @@ const char* vertex_shader_src = \
 "}                                                    \n\0";
 
 static GLuint vertex_shader;
+
+static inline size_t buf_size(buffer_t* buf) {
+    size_t sz = buf->elem_size;
+    if (buf->extent[0]) sz *= buf->extent[0];
+    if (buf->extent[1]) sz *= buf->extent[1];
+    if (buf->extent[2]) sz *= buf->extent[2];
+    if (buf->extent[3]) sz *= buf->extent[3];
+    assert(sz);
+    return sz;
+}
 
 //------------------------------------ open GL helper functions --------------------------//
 
@@ -231,9 +241,12 @@ static GLuint make_program(GLuint vertex_shader, GLuint fragment_shader)
 WEAK void halide_dev_free(buffer_t* buf) {
     SAY_HI();
     if (buf && buf->dev) {
+        printf("freeing texture %u on device\n", (GLuint) buf->dev);
         const GLuint *tex_ref = (GLuint *) &(buf->dev);
         glDeleteTextures(1, tex_ref);
         __tex_info().erase(*tex_ref);
+    } else {
+        printf("texture already freed\n");
     }
     buf->dev = 0;
     CHECK_ERROR();
@@ -244,6 +257,7 @@ WEAK void halide_dev_malloc(buffer_t* buf) {
     assert(buf && "buf is null");
     SAY_HI();
     if (buf->dev) {
+        printf("buffer alread associated with texture %u\n", (GLuint) buf->dev);
         return;
     }
 
@@ -267,7 +281,9 @@ WEAK void halide_dev_malloc(buffer_t* buf) {
     w = w > 0 ? w : 1;
     int h = buf->extent[1];
     h = h > 0 ? h : 1;
-    printf("mallocing buffer with dim [%d, %d, %d, %d]\n", buf->extent[0], buf->extent[1],
+    printf("mallocing buffer %u with dim [%d, %d, %d, %d]\n",
+           texture,
+           buf->extent[0], buf->extent[1],
            buf->extent[2], buf->extent[3]);
     assert(buf->extent[2] <= 4 && "only support 3rd dimension of size <= 4");
     assert(buf->extent[3] <= 1 && "only support 4th dimension of size <= 1");
@@ -303,7 +319,7 @@ WEAK void halide_dev_sync() {
 WEAK void halide_copy_to_dev(buffer_t* buf) {
     SAY_HI();
     if(buf->host_dirty) {
-        printf("copying texture %d to device\n", (int) buf->dev);
+        printf("copying texture %u to device\n", (GLuint) buf->dev);
         int w = buf->extent[0];
         w = w > 0 ? w : 1;
         int h = buf->extent[1];
@@ -323,6 +339,8 @@ WEAK void halide_copy_to_dev(buffer_t* buf) {
         
         glBindTexture(GL_TEXTURE_2D, 0);
         CHECK_ERROR();
+    } else {
+        printf("skipping copying texture %u to device\n", (GLuint) buf->dev);
     }
     buf->host_dirty = false;
 }
@@ -331,6 +349,11 @@ WEAK void halide_copy_to_host(buffer_t* buf) {
     // should copy pixels from texture to cpu memory
     SAY_HI();
     if (buf->dev_dirty) {
+        printf("copying texture %u to host\n", (GLuint) buf->dev);
+        //assert(buf->host && "no host memory allocated");
+        if (!buf->host) {
+            buf->host = (uint8_t *) malloc(buf_size(buf));
+        }
         glFinish(); // is this necessary?
         glBindTexture(GL_TEXTURE_2D, (GLuint) buf->dev);
         GLenum type = GL_FLOAT;
@@ -338,9 +361,18 @@ WEAK void halide_copy_to_host(buffer_t* buf) {
         glGetTexImage(GL_TEXTURE_2D, 0, format, type, (void *) buf->host);
         glBindTexture(GL_TEXTURE_2D, 0);
         CHECK_ERROR();
+        printf("dumping buf: ");
+        for (int i = 0; i < buf_size(buf)/buf->elem_size; i++) {
+            printf("%f, ", ((float *) buf->host)[i]);
+        }
+        printf("\n");
+    } else {
+        printf("skipping copying texture %u to host\n", (GLuint) buf->dev);
     }
     buf->dev_dirty = false;
 }
+    // not sure what this does or if it matters
+    //#define _COPY_TO_HOST
 
 WEAK void halide_init_kernels(const char* src) {
     // need to split src (use #version as delimiter?)
@@ -353,7 +385,7 @@ WEAK void halide_init_kernels(const char* src) {
         glutCreateWindow("Hello World");
         glewInit();
         // check flag for new enough version of OpenGL
-        if (!GLEW_VERSION_4_0) {
+        if (!GLEW_VERSION_2_0) {
             fprintf(stderr, "OpenGL 4.0 not available\n");
         }
         // make our framebuffer
@@ -458,8 +490,9 @@ WEAK void halide_dev_run(
     // first, put the input arguments into a map
     std::map <std::string, void*> arg_map;
     int i = 0;
+    printf("args: ["); 
     while(arg_sizes[i]!=0) {
-        printf("arg[%d]: %s\n", i, arg_names[i]);
+        printf("%s, ", arg_names[i]);
         std::ostringstream oss;
         char c;
         int j = 0;
@@ -476,6 +509,7 @@ WEAK void halide_dev_run(
         }
         ++i;
     }
+    printf("]\n");
 
     // attach output texture to framebuffer
     // TODO: we can't assume that this is our output
@@ -488,13 +522,15 @@ WEAK void halide_dev_run(
     check_framebuffer_status(GL_FRAMEBUFFER);
     // The fragment shader output value is written into the nth color attachment
     // of the current framebuffer. n may range from 0 to the value of GL_MAX_COLOR_ATTACHMENTS.
-    const GLenum bufs[] = {GL_COLOR_ATTACHMENT0};
+    GLenum bufs[] = {GL_COLOR_ATTACHMENT0};
     glDrawBuffers(1, bufs);
     CHECK_ERROR();
     // set the viewport to the size of the output
     buffer_t *output_buf = __tex_info()[output_texture]->buf;
-    printf("output buf extents: [%d, %d, %d, %d]\n", output_buf->extent[0],
-           output_buf->extent[1], output_buf->extent[2], output_buf->extent[3]);
+    printf("output buf (texture %u) has extents: [%d, %d, %d, %d]\n", 
+           output_texture,
+           output_buf->extent[0], output_buf->extent[1],
+           output_buf->extent[2], output_buf->extent[3]);
     glViewport(0, 0, output_buf->extent[0], output_buf->extent[1]);
     CHECK_ERROR();
 
@@ -531,6 +567,8 @@ WEAK void halide_dev_run(
                 dim[j] = d->buf->extent[j];
                 dim[j] = dim[j] > 0 ? dim[j] : 1;
             }
+            halide_copy_to_host(d->buf);
+
             // it would be nicer maybe to put this in the arg_map
             name_str = "dim_of_" + std::string(name);
             loc = glGetUniformLocation(program, name_str.c_str());
@@ -607,6 +645,8 @@ WEAK void halide_dev_run(
         glActiveTexture(GL_TEXTURE0 + num_active_textures);
         glBindTexture(GL_TEXTURE_2D, 0);
     }
+    bufs[0] = GL_NONE;
+    glDrawBuffers(1, bufs);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
