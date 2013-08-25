@@ -107,6 +107,42 @@ void CodeGen_OpenGL_Dev::CodeGen_OpenGL_C::visit(const Load *op) {
     print_assignment(op->type, rhs.str());
 }
 
+void CodeGen_OpenGL_Dev::CodeGen_OpenGL_C::visit(const Max *op) {
+    // version 120 only supports min of floats, so we have to cast back and forth
+    Expr a = op->a;
+    if (!(op->a.type().is_float())){
+        a = Cast::make(Float(a.type().bits), a);
+    }
+    Expr b = op->b;
+    if (!b.type().is_float()){
+        b = Cast::make(Float(b.type().bits), b);
+    }
+    Expr out = Call::make(Float(32), "max", vec(a, b), Call::Extern);
+    if (!op->type.is_float()) {
+        print_expr(Cast::make(op->type, out));
+    } else {
+        print_expr(out);
+    }
+}
+
+void CodeGen_OpenGL_Dev::CodeGen_OpenGL_C::visit(const Min *op) {
+    // version 120 only supports min of floats, so we have to cast back and forth
+    Expr a = op->a;
+    if (!(op->a.type().is_float())){
+        a = Cast::make(Float(a.type().bits), a);
+    }
+    Expr b = op->b;
+    if (!b.type().is_float()){
+        b = Cast::make(Float(b.type().bits), b);
+    }
+    Expr out = Call::make(Float(32), "min", vec(a, b), Call::Extern);
+    if (!op->type.is_float()) {
+        print_expr(Cast::make(op->type, out));
+    } else {
+        print_expr(out);
+    }
+}
+
 void CodeGen_OpenGL_Dev::CodeGen_OpenGL_C::visit(const Store *op) {
     do_indent();
     stream << OUTPUT_NAME_DELIMITER

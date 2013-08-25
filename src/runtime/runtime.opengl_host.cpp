@@ -374,11 +374,13 @@ WEAK void halide_init_kernels(const char* src) {
     // and get kernel names (include as comments?)
     SAY_HI();
     if (!__initialized) {
-        // initialize openGL stuff
-        int argc = 0;
-        glutInit(&argc, NULL);
-        glutCreateWindow("Hello World");
-        glewInit();
+        // initialize openGL stuff, but only do it once
+        if (!GLEW_VERSION_2_0) {
+            int argc = 0;
+            glutInit(&argc, NULL);
+            glutCreateWindow("Hello World");
+            glewInit();
+        }
         // check flag for new enough version of OpenGL
         if (!GLEW_VERSION_2_0) {
             fprintf(stderr, "OpenGL 2.0 not available\n");

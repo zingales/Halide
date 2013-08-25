@@ -45,6 +45,8 @@ protected:
         void visit(const Cast *);
         void visit(const For *);
         void visit(const Load *);
+        void visit(const Max *);
+        void visit(const Min *);
         void visit(const Store *);
     };
     
