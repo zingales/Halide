@@ -94,6 +94,7 @@ void CodeGen_OpenGL_Dev::CodeGen_OpenGL_C::visit(const Load *op) {
     string x = "mod(" + idx_1d + " + 0.5, dim_of_" + op->name + ".x)";
     string y = "float(" + idx_1d + " + 0.5)/dim_of_" + op->name + ".y";
     string idx_2d = "vec2(" + x + ", " + y + ")";
+    
     rhs << "texture2D("
         << print_name(op->name)
         << ", "
@@ -102,6 +103,7 @@ void CodeGen_OpenGL_Dev::CodeGen_OpenGL_C::visit(const Load *op) {
         << print_name(op->name)
         << ".xy"
         << ").x";
+
     print_assignment(op->type, rhs.str());
 }
 

@@ -14,6 +14,9 @@ PNGFLAGS=$(LIBPNG_LIBS) $(LIBPNG_CXX_FLAGS)
 ifeq ($(HL_TARGET),ptx)
   CUDA_LDFLAGS=-L/usr/lib/nvidia-current -lcuda
 endif
+ifeq ($(HL_TARGET),ptx-debug)
+  CUDA_LDFLAGS=-L/usr/lib/nvidia-current -lcuda
+endif
 
 all: filter
 
@@ -25,7 +28,7 @@ bilateral_grid.o: bilateral_grid
 	./bilateral_grid 8
 
 filter: bilateral_grid.o filter.cpp
-	$(CXX) -I../support -O3 -ffast-math -Wall -Werror filter.cpp bilateral_grid.o -lpng -lpthread -ldl -o filter  $(PNGFLAGS) $(CUDA_LDFLAGS)
+	$(CXX) -I../support -O3 -ffast-math -Wall -Werror filter.cpp bilateral_grid.o -lpthread -ldl -o filter  $(PNGFLAGS) $(CUDA_LDFLAGS)
 
 out.png: filter
 	./filter ../images/gray.png out.png 0.1

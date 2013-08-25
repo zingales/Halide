@@ -23,13 +23,22 @@
 #if WITH_PTX
 extern "C" unsigned char halide_internal_initmod_ptx_host[];
 extern "C" int halide_internal_initmod_ptx_host_length;
+extern "C" unsigned char halide_internal_initmod_ptx_host_debug[];
+extern "C" int halide_internal_initmod_ptx_host_debug_length;
 #else
 static void *halide_internal_initmod_ptx_host = 0;
 static int halide_internal_initmod_ptx_host_length = 0;
+static void *halide_internal_initmod_ptx_host_debug = 0;
+static int halide_internal_initmod_ptx_host_debug_length = 0;
 #endif
 
+#if WITH_OPENCL
 extern "C" unsigned char halide_internal_initmod_opencl_host[];
 extern "C" int halide_internal_initmod_opencl_host_length;
+#else
+static void * halide_internal_initmod_opencl_host = 0;
+static int halide_internal_initmod_opencl_host_length = 0;
+#endif
 
 extern "C" unsigned char halide_internal_initmod_opengl_host[];
 extern "C" int halide_internal_initmod_opengl_host_length;
@@ -297,9 +306,20 @@ CodeGen_GPU_Host::CodeGen_GPU_Host(uint32_t options) :
 
     if (options & GPU_PTX) {
         assert(llvm_NVPTX_enabled && "llvm build not configured with nvptx target enabled.");
-        initmod = halide_internal_initmod_ptx_host;
-        initmod_length = halide_internal_initmod_ptx_host_length;
+        #if !(WITH_PTX)
+        assert(false && "ptx not enabled for this build of Halide.");
+        #endif
+        if (options & GPU_debug) {
+            initmod = halide_internal_initmod_ptx_host_debug;
+            initmod_length = halide_internal_initmod_ptx_host_debug_length;
+        } else {
+            initmod = halide_internal_initmod_ptx_host;
+            initmod_length = halide_internal_initmod_ptx_host_length;
+        }
     } else if (options & GPU_OpenCL) {
+        #if !(WITH_OPENCL)
+        assert(false && "OpenCL target not enabled for this build of Halide.");
+        #endif
         initmod = halide_internal_initmod_opencl_host;
         initmod_length = halide_internal_initmod_opencl_host_length;
     } else if (options & GPU_OpenGL) {
@@ -311,10 +331,10 @@ CodeGen_GPU_Host::CodeGen_GPU_Host(uint32_t options) :
 CodeGen_GPU_Dev* CodeGen_GPU_Host::make_dev(uint32_t options)
 {
     if (options & GPU_PTX) {
-        debug(0) << "Constructing PTX device codegen\n";
+        debug(1) << "Constructing PTX device codegen\n";
         return new CodeGen_PTX_Dev();
     } else if (options & GPU_OpenCL) {
-        debug(0) << "Constructing OpenCL device codegen\n";
+        debug(1) << "Constructing OpenCL device codegen\n";
         return new CodeGen_OpenCL_Dev();
     } else {
         debug(0) << "Constructing OpenGL device codegen\n";
@@ -745,7 +765,7 @@ void CodeGen_GPU_Host::visit(const Allocate *alloc) {
         builder->CreateStore(zero32,  buffer_min_ptr(buf, 2));
         builder->CreateStore(zero32,  buffer_min_ptr(buf, 3));
 
-        int bytes = alloc->type.width * alloc->type.bits / 8;
+        int bytes = alloc->type.width * alloc->type.bytes();
         builder->CreateStore(ConstantInt::get(i32, bytes),
                              buffer_elem_size_ptr(buf));
 

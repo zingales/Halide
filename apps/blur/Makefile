@@ -16,6 +16,9 @@ PNGFLAGS=$(LIBPNG_LIBS) $(LIBPNG_CXX_FLAGS)
 ifeq ($(HL_TARGET),ptx)
   CUDA_LDFLAGS=-L/usr/lib/nvidia-current -lcuda
 endif
+ifeq ($(HL_TARGET),ptx-debug)
+  CUDA_LDFLAGS=-L/usr/lib/nvidia-current -lcuda
+endif
 
 halide_blur: ../../ halide_blur.cpp
 	$(MAKE) -C ../../ bin/libHalide.a
@@ -26,7 +29,7 @@ halide_blur.o: halide_blur
 
 # -O2 is faster than -O3 for this app (O3 unrolls too much)
 test: test.cpp halide_blur.o
-	$(GXX) -msse2 -fopenmp -lpng -Wall -O2 -I ../support/ test.cpp halide_blur.o -o test -lpthread -ldl -lpng $(PNGFLAGS) $(CUDA_LDFLAGS)
+	$(GXX) -msse2 -fopenmp -Wall -O2 -I ../support/ test.cpp halide_blur.o -o test -lpthread -ldl $(PNGFLAGS) $(CUDA_LDFLAGS)
 
 clean:
 	rm -f test halide_blur.o halide_blur

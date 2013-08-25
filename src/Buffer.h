@@ -11,7 +11,7 @@
 
 #include <stdint.h>
 
-/** \file 
+/** \file
  * Defines Buffer - A c++ wrapper around a buffer_t.
  */
 
@@ -46,18 +46,18 @@ struct BufferContents {
     JITCompiledModule source_module;
 
     BufferContents(Type t, int x_size, int y_size, int z_size, int w_size,
-                   uint8_t* data = NULL) :
-        type(t), allocation(NULL), name(unique_name('b'))
-    {
+                   uint8_t* data, const std::string &n) :
+        type(t), allocation(NULL), name(n.empty() ? unique_name('b') : n) {
         assert(t.width == 1 && "Can't create of a buffer of a vector type");
-        buf.elem_size = t.bits / 8;        
+        buf.elem_size = t.bytes();
         size_t size = 1;
         if (x_size) size *= x_size;
         if (y_size) size *= y_size;
         if (z_size) size *= z_size;
         if (w_size) size *= w_size;
         if (!data) {
-            allocation = (uint8_t *)calloc(buf.elem_size, size + 32/buf.elem_size);
+            size = buf.elem_size*size + 32;
+            allocation = (uint8_t *)calloc(1, size);
             buf.host = allocation;
             while ((size_t)(buf.host) & 0x1f) buf.host++;
         } else {
@@ -80,8 +80,8 @@ struct BufferContents {
         buf.min[3] = 0;
     }
 
-    BufferContents(Type t, const buffer_t *b) :
-        type(t), allocation(NULL) {
+    BufferContents(Type t, const buffer_t *b, const std::string &n) :
+        type(t), name(n.empty() ? unique_name('b') : n) {
         buf = *b;
         assert(t.width == 1 && "Can't create of a buffer of a vector type");
     }
@@ -104,12 +104,12 @@ public:
     Buffer() : contents(NULL) {}
 
     Buffer(Type t, int x_size = 0, int y_size = 0, int z_size = 0, int w_size = 0,
-           uint8_t* data = NULL) :
-        contents(new Internal::BufferContents(t, x_size, y_size, z_size, w_size, data)) {
+           uint8_t* data = NULL, const std::string &name = "") :
+        contents(new Internal::BufferContents(t, x_size, y_size, z_size, w_size, data, name)) {
     }
-    
-    Buffer(Type t, const buffer_t *buf) : 
-        contents(new Internal::BufferContents(t, buf)) {
+
+    Buffer(Type t, const buffer_t *buf, const std::string &name = "") :
+        contents(new Internal::BufferContents(t, buf, name)) {
     }
 
     /** Get a pointer to the host-side memory. */
@@ -117,13 +117,13 @@ public:
         assert(defined());
         return (void *)contents.ptr->buf.host;
     }
-    
+
     /** Get a pointer to the raw buffer_t struct that this class wraps. */
     buffer_t *raw_buffer() const {
         assert(defined());
         return &(contents.ptr->buf);
     }
-    
+
     /** Get the device-side pointer/handle for this buffer. Will be
      * zero if no device was involved in the creation of this
      * buffer. */
@@ -131,14 +131,14 @@ public:
         assert(defined());
         return contents.ptr->buf.dev;
     }
-    
+
     /** Has this buffer been modified on the cpu since last copied to a
      * device. Not meaningful unless there's a device involved. */
     bool host_dirty() const {
         assert(defined());
         return contents.ptr->buf.host_dirty;
     }
-    
+
     /** Let Halide know that the host-side memory backing this buffer
      * has been externally modified. You shouldn't normally need to
      * call this, because it is done for you when you cast a Buffer to
@@ -181,14 +181,14 @@ public:
         assert(dim >= 0 && dim < 4 && "We only support 4-dimensional buffers for now");
         return contents.ptr->buf.extent[dim];
     }
-    
+
     /** Get the number of bytes between adjacent elements of this buffer along the given dimension. */
     int stride(int dim) const {
         assert(defined());
         assert(dim >= 0 && dim < 4 && "We only support 4-dimensional buffers for now");
         return contents.ptr->buf.stride[dim];
     }
-    
+
     /** Get the coordinate in the function that this buffer represents
      * that corresponds to the base address of the buffer. */
     int min(int dim) const {
@@ -196,12 +196,22 @@ public:
         assert(dim >= 0 && dim < 4 && "We only support 4-dimensional buffers for now");
         return contents.ptr->buf.min[dim];
     }
-    
+
+    /** Set the coordinate in the function that this buffer represents
+     * that corresponds to the base address of the buffer. */
+    void set_min(int m0, int m1 = 0, int m2 = 0, int m3 = 0) {
+        assert(defined());
+        contents.ptr->buf.min[0] = m0;
+        contents.ptr->buf.min[1] = m1;
+        contents.ptr->buf.min[2] = m2;
+        contents.ptr->buf.min[3] = m3;
+    }
+
     /** Get the Halide type of the contents of this buffer. */
     Type type() const {
         assert(defined());
         return contents.ptr->type;
-    }    
+    }
 
     /** Compare two buffers for identity (not equality of data). */
     bool same_as(const Buffer &other) const {
@@ -229,7 +239,7 @@ public:
         assert(defined());
         contents.ptr->source_module = module;
     }
-    
+
     /** If this buffer was the output of a jit-compiled realization,
      * retrieve the module it came from. Otherwise returns a module
      * struct full of null pointers. */
@@ -242,7 +252,7 @@ public:
      * realization, then copy it back to the cpu-side memory. This is
      * usually achieved by casting the Buffer to an Image. */
     void copy_to_host() {
-        void (*copy_to_host)(buffer_t *) = 
+        void (*copy_to_host)(buffer_t *) =
             contents.ptr->source_module.copy_to_host;
         if (copy_to_host) {
             copy_to_host(raw_buffer());
@@ -260,11 +270,11 @@ public:
      * you. Casting the Buffer to an Image sets the dirty bit for
      * you. */
     void copy_to_dev() {
-        void (*copy_to_dev)(buffer_t *) = 
+        void (*copy_to_dev)(buffer_t *) =
             contents.ptr->source_module.copy_to_dev;
         if (copy_to_dev) {
             copy_to_dev(raw_buffer());
-        }        
+        }
     }
 
     /** If this buffer was created by a jit-compiled realization on a
@@ -272,12 +282,13 @@ public:
      * allocation, if there is one. Done automatically when the last
      * reference to this buffer dies. */
     void free_dev_buffer() {
-        void (*free_dev_buffer)(buffer_t *) = 
+        void (*free_dev_buffer)(buffer_t *) =
             contents.ptr->source_module.free_dev_buffer;
         if (free_dev_buffer) {
             free_dev_buffer(raw_buffer());
         }
     }
+
 };
 
 namespace Internal {
@@ -289,13 +300,16 @@ inline RefCount &ref_count<BufferContents>(const BufferContents *p) {
 template<>
 inline void destroy<BufferContents>(const BufferContents *p) {
     // Free any device-side allocation
-    if (p->source_module.free_dev_buffer) p->source_module.free_dev_buffer(const_cast<buffer_t *>(&p->buf));
-    // Free any host-side allocation if we were the ones to make it
-    if (p->allocation) free(p->allocation);
+    if (p->source_module.free_dev_buffer) {
+        p->source_module.free_dev_buffer(const_cast<buffer_t *>(&p->buf));
+    }
+    if (p->allocation) {
+        free(p->allocation);
+    }
     delete p;
 }
-}
 
+}
 }
 
 #endif

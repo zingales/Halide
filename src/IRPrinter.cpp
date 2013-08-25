@@ -24,8 +24,9 @@ ostream &operator<<(ostream &out, Type type) {
     case Type::Float:
         out << "float";
         break;
-    default:
-        assert(false && "Malformed type");
+    case Type::Handle:
+        out << "handle";
+        break;
     }
     out << type.bits;
     if (type.width > 1) out << 'x' << type.width;
@@ -102,8 +103,6 @@ ostream &operator<<(ostream &out, const For::ForType &type) {
     case For::Vectorized:
         out << "vectorized";
         break;
-    default:
-        assert(false && "Malformed for type");
     }
     return out;
 }
@@ -412,7 +411,19 @@ void IRPrinter::visit(const Provide *op) {
         if (i < op->args.size() - 1) stream << ", ";
     }
     stream << ") = ";
-    print(op->value);
+    if (op->values.size() > 1) {
+        stream << "{";
+    }
+    for (size_t i = 0; i < op->values.size(); i++) {
+        if (i > 0) {
+            stream << ", ";
+        }
+        print(op->values[i]);
+    }
+    if (op->values.size() > 1) {
+        stream << "}";
+    }
+
     stream << endl;
 }
 
