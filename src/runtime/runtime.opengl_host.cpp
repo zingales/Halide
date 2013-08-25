@@ -7,7 +7,7 @@
 #include <sstream>
 #include <math.h>
 
-// The PTX host extends the x86 target
+// The OpenGL host extends the x86 target
 #include "posix_allocator.cpp"
 #include "posix_clock.cpp"
 #include "posix_error_handler.cpp"
@@ -36,19 +36,20 @@
 
 extern "C" {
 
-// #define NDEBUG // disable logging/asserts for performance
+//#define NDEBUG // disable logging/asserts for performance
 
-#ifndef NDEBUG
+#ifdef NDEBUG
+#define CHECK_ERROR()
+#define SAY_HI()
+#else // DEBUG
 #define CHECK_ERROR()                                                   \
     { GLenum errCode;                                                   \
         if((errCode = glGetError()) != GL_NO_ERROR)                     \
-            fprintf (stderr, "OpenGL Error at line %d: 0x%04x\n", __LINE__, (unsigned int) errCode); \
+            fprintf (stderr, "OpenGL Error at line %d: 0x%04x\n",       \
+                     __LINE__, (unsigned int) errCode);                 \
     }
 #define SAY_HI() printf("hi %s()!\n",  __PRETTY_FUNCTION__)
-#else
-#define CHECK_ERROR()
-#define SAY_HI() 
-#endif //NDEBUG
+#endif // NDEBUG
 
 }
 
@@ -57,6 +58,7 @@ typedef struct {
     GLuint program;
     std::string output_name;
 } program_metadata;
+
 std::map<std::string, program_metadata*>& __gl_programs() {
     static std::map<std::string, program_metadata*> *ref = 
         new std::map<std::string, program_metadata*>;
@@ -64,9 +66,11 @@ std::map<std::string, program_metadata*>& __gl_programs() {
 }
 
 // map for storing additional texture data
+//   currently, the original buffer
 typedef struct {
     buffer_t *buf;
 } tex_metadata;
+
 std::map<GLuint, tex_metadata*>& __tex_info() {
     static std::map<GLuint, tex_metadata*> *ref = new std::map<GLuint, tex_metadata*>;
     return *ref;
@@ -74,7 +78,7 @@ std::map<GLuint, tex_metadata*>& __tex_info() {
 
 extern "C" {
 
-//apparently this is important
+// apparently this is important
 WEAK void *__dso_handle;
 
 // for parsing shader source
@@ -131,7 +135,9 @@ void check_framebuffer_status(GLuint framebuffer) {
     SAY_HI();
     GLenum status = glCheckFramebufferStatus(framebuffer);
     if (status==GL_FRAMEBUFFER_COMPLETE) {
+#ifndef NDEBUG
         printf("framebuffer =)\n");
+#endif // NDEBUG
     } else if (status==GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT) {
         printf("GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT\n");
     } else if (status==GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT) {
@@ -166,13 +172,8 @@ static GLuint make_shader(GLenum type, const char *source, GLint *length)
 {
     GLuint shader;
     GLint shader_ok;
-    
-    if (!source)
-        return 0;
-    
-    // GLSL builds the shader from source every time. Here we read our 
-    // shader source out of a separate file, which lets us change the
-    // shader source without recompiling our C.
+    assert(source && "missing source");
+
     shader = glCreateShader(type);
     glShaderSource(shader, 1, (const GLchar**)&source, length);
     glCompileShader(shader);
@@ -232,6 +233,9 @@ WEAK void halide_dev_free(buffer_t* buf) {
     SAY_HI();
     if (buf && buf->dev) {
         const GLuint *tex_ref = (GLuint *) &(buf->dev);
+#ifndef NDEBUG
+        printf("freeing texture %u\n", *tex_ref);
+#endif
         glDeleteTextures(1, tex_ref);
         __tex_info().erase(*tex_ref);
     }
@@ -244,6 +248,10 @@ WEAK void halide_dev_malloc(buffer_t* buf) {
     assert(buf && "buf is null");
     SAY_HI();
     if (buf->dev) {
+#ifndef NDEBUG
+        printf("buf %lu already malloced with texture %lu\n",
+               (uint64_t) buf, (uint64_t) buf->dev);
+#endif
         return;
     }
 
@@ -263,14 +271,17 @@ WEAK void halide_dev_malloc(buffer_t* buf) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     CHECK_ERROR();
     // make sure width and height are nonzero
-    int w = buf->extent[0];
-    w = w > 0 ? w : 1;
-    int h = buf->extent[1];
-    h = h > 0 ? h : 1;
-    printf("mallocing buffer with dim [%d, %d, %d, %d]\n", buf->extent[0], buf->extent[1],
+    int w = std::max(buf->extent[0], 1);
+    int h = std::max(buf->extent[1], 1);
+#ifndef NDEBUG
+    printf("mallocing buffer with dim [%d, %d, %d, %d]\n",
+           buf->extent[0], buf->extent[1],
            buf->extent[2], buf->extent[3]);
-    assert(buf->extent[2] <= 4 && "only support 3rd dimension of size <= 4");
-    assert(buf->extent[3] <= 1 && "only support 4th dimension of size <= 1");
+#endif
+    assert(buf->extent[2] <= 4 &&
+           "only support 3rd dimension of size <= 4");
+    assert(buf->extent[3] <= 1 &&
+           "only support 4th dimension of size <= 1");
     // TODO: vary type (only support floats for now)
     GLenum type = GL_FLOAT;
     GLenum format = fmts[buf->extent[2]];
@@ -281,10 +292,15 @@ WEAK void halide_dev_malloc(buffer_t* buf) {
     glTexImage2D(GL_TEXTURE_2D, 0, internal_format, w, h,
                  0, format, type, NULL);
     buf->dev = texture;
-    // save metadata where we can access it via the texture object name (which should be unique)
+#ifndef NDEBUG
+    printf("malloced buf %lu with texture %lu\n",
+           (uint64_t) buf, (uint64_t) buf->dev);
+#endif
+    // save metadata where we can access it via the texture object name
     tex_metadata *d = new tex_metadata;
     d->buf = buf;
-    assert(__tex_info().count(texture)==0 && "texture names should be unique");
+    assert(__tex_info().count(texture)==0 &&
+           "texture names should be unique");
     __tex_info()[texture] = d;
     // clean up
     glBindTexture(GL_TEXTURE_2D, 0);
@@ -303,11 +319,11 @@ WEAK void halide_dev_sync() {
 WEAK void halide_copy_to_dev(buffer_t* buf) {
     SAY_HI();
     if(buf->host_dirty) {
+#ifndef NDEBUG
         printf("copying texture %d to device\n", (int) buf->dev);
-        int w = buf->extent[0];
-        w = w > 0 ? w : 1;
-        int h = buf->extent[1];
-        h = h > 0 ? h : 1;
+#endif
+        int w = std::max(buf->extent[0], 1);
+        int h = std::max(buf->extent[1], 1);
         // for now constrain buffer to have 3 color channels
         assert(buf->extent[2] <= 4);
         assert(buf->extent[3] <= 1);
@@ -323,6 +339,10 @@ WEAK void halide_copy_to_dev(buffer_t* buf) {
         
         glBindTexture(GL_TEXTURE_2D, 0);
         CHECK_ERROR();
+    } else {
+#ifndef NDEBUG
+        printf("host isn't dirty for buf %lu\n", (uint64_t) buf);
+#endif
     }
     buf->host_dirty = false;
 }
@@ -331,6 +351,9 @@ WEAK void halide_copy_to_host(buffer_t* buf) {
     // should copy pixels from texture to cpu memory
     SAY_HI();
     if (buf->dev_dirty) {
+#ifndef NDEBUG
+        printf("copying texture %d to host\n", (int) buf->dev);
+#endif
         glFinish(); // is this necessary?
         glBindTexture(GL_TEXTURE_2D, (GLuint) buf->dev);
         GLenum type = GL_FLOAT;
@@ -338,6 +361,10 @@ WEAK void halide_copy_to_host(buffer_t* buf) {
         glGetTexImage(GL_TEXTURE_2D, 0, format, type, (void *) buf->host);
         glBindTexture(GL_TEXTURE_2D, 0);
         CHECK_ERROR();
+    } else {
+#ifndef NDEBUG
+        printf("dev isn't dirty for buf %lu\n", (uint64_t) buf);
+#endif
     }
     buf->dev_dirty = false;
 }
@@ -353,8 +380,8 @@ WEAK void halide_init_kernels(const char* src) {
         glutCreateWindow("Hello World");
         glewInit();
         // check flag for new enough version of OpenGL
-        if (!GLEW_VERSION_4_0) {
-            fprintf(stderr, "OpenGL 4.0 not available\n");
+        if (!GLEW_VERSION_2_0) {
+            fprintf(stderr, "OpenGL 2.0 not available\n");
         }
         // make our framebuffer
         glGenFramebuffers(1, &__framebuffer);
@@ -362,7 +389,7 @@ WEAK void halide_init_kernels(const char* src) {
         glBindFramebuffer(GL_FRAMEBUFFER, __framebuffer);
         glDisable(GL_CULL_FACE);
         glDisable(GL_DEPTH_TEST);
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        //glBindFramebuffer(GL_FRAMEBUFFER, 0);
         CHECK_ERROR();
         // make our vertex and element buffers
         vertex_buffer = make_buffer(GL_ARRAY_BUFFER,
@@ -386,30 +413,38 @@ WEAK void halide_init_kernels(const char* src) {
             while(true) {
                 // get kernel
                 end_pos = src_str.find(KNL_DELIMITER, start_pos+1);
+#ifndef NDEBUG
                 printf("start %lu end %lu\n", start_pos, end_pos);
+#endif
                 if (start_pos >= end_pos) {
                     printf("bailing out and dumping source:\n%s\n", src);
                     assert(false && "source is missing #version delimiter");
                 }
-                std::string knl = src_str.substr(start_pos, end_pos - start_pos);
+                std::string knl = src_str.substr(start_pos,
+                                                 end_pos - start_pos);
                 // get kernel name
                 size_t knl_name_start = knl.find(knl_name_delimiter) 
                     + knl_name_delimiter.length();
-                size_t knl_name_end = knl.find(knl_name_delimiter, knl_name_start);
-                std::string knl_name = knl.substr(knl_name_start, knl_name_end - knl_name_start);
+                size_t knl_name_end = 
+                    knl.find(knl_name_delimiter, knl_name_start);
+                std::string knl_name =
+                    knl.substr(knl_name_start, knl_name_end - knl_name_start);
                 // get output name
-                size_t output_name_start = knl.find(output_name_delimiter) 
+                size_t output_name_start = knl.find(output_name_delimiter)
                     + output_name_delimiter.length();
-                size_t output_name_end = knl.find(output_name_delimiter, output_name_start);
+                size_t output_name_end =
+                    knl.find(output_name_delimiter, output_name_start);
                 std::string output_name = knl.substr(output_name_start, 
                                                      output_name_end - output_name_start);
                 // TODO: check for invalid names
                 // build shader
+#ifndef NDEBUG
                 printf("making fragment shader named %s with output name %s with src:"
                        "\n---------\n%s\n--------\n",
                        knl_name.c_str(),
                        output_name.c_str(),
                        knl.c_str());
+#endif
                 GLuint fragment_shader = make_shader(GL_FRAGMENT_SHADER, knl.c_str(), NULL);
                 assert(fragment_shader && "failed to make fragment shader");
                 // now make program
@@ -426,11 +461,12 @@ WEAK void halide_init_kernels(const char* src) {
                     break;
                 } else { // moar kernelz
                     start_pos = end_pos;
-                }
-                
+                }               
             }
         }
+#ifndef NDEBUG
         printf("kernel initialization success! src string length was %ld\n", src_str.length());
+#endif
     }
     // mark as initialized
     __initialized = true;
@@ -447,8 +483,10 @@ WEAK void halide_dev_run(
 {
     SAY_HI();
     // todo: convert blocks range and threads range into quad indices
-    printf("blocksX: %d blocksY: %d blocksZ: %d threadsX: %d threadsY: %d threadsZ: %d\n",
-           blocksX, blocksY, blocksZ, threadsX, threadsY, threadsZ);
+#ifndef NDEBUG
+    printf("kernel: %s blocksX: %d blocksY: %d blocksZ: %d threadsX: %d threadsY: %d threadsZ: %d\n",
+           entry_name, blocksX, blocksY, blocksZ, threadsX, threadsY, threadsZ);
+    #endif
     // fetch the program
     std::string output_name = __gl_programs()[entry_name]->output_name;
     GLuint output_texture;
@@ -459,7 +497,6 @@ WEAK void halide_dev_run(
     std::map <std::string, void*> arg_map;
     int i = 0;
     while(arg_sizes[i]!=0) {
-        printf("arg[%d]: %s\n", i, arg_names[i]);
         std::ostringstream oss;
         char c;
         int j = 0;
@@ -469,6 +506,9 @@ WEAK void halide_dev_run(
             j++;
         }
         std::string str = oss.str();
+#ifndef NDEBUG
+        printf("arg[%d]: %s\n", i, str.c_str());
+#endif
         if (str==output_name) {
             output_texture = * (GLuint *) args[i];
         } else {
@@ -493,22 +533,29 @@ WEAK void halide_dev_run(
     CHECK_ERROR();
     // set the viewport to the size of the output
     buffer_t *output_buf = __tex_info()[output_texture]->buf;
-    printf("output buf extents: [%d, %d, %d, %d]\n", output_buf->extent[0],
-           output_buf->extent[1], output_buf->extent[2], output_buf->extent[3]);
-    glViewport(0, 0, output_buf->extent[0], output_buf->extent[1]);
+#ifndef NDEBUG
+    printf("output buf extents: [%d, %d, %d, %d]\n",
+           output_buf->extent[0], output_buf->extent[1],
+           output_buf->extent[2], output_buf->extent[3]);
+#endif
+    glViewport(0, 0, std::max(output_buf->extent[0], 1),
+               std::max(output_buf->extent[1], 1));
     CHECK_ERROR();
 
     // explicitly add output dimensions
     GLint output_dim = glGetUniformLocation(program, "output_dim");
-    GLint output_dim_val[] = {output_buf->extent[0], output_buf->extent[1]};
+    GLint output_dim_val[] = {std::max(output_buf->extent[0], 1),
+                              std::max(output_buf->extent[1], 1)};
     arg_map["output_dim"] = (void *) output_dim_val;
     // now add passed in arguments
     GLint n_active_uniforms;
     glGetProgramiv(program, GL_ACTIVE_UNIFORMS, &n_active_uniforms);
     GLint max_uniform_length;
     glGetProgramiv(program, GL_ACTIVE_UNIFORM_MAX_LENGTH, &max_uniform_length);
+#ifndef NDEBUG
     printf("found %d active uniforms with max name length %d\n",
            n_active_uniforms, max_uniform_length);
+#endif
     // keep track of active texture in case we have to bind multiple input textures
     int num_active_textures = 0;
     // allocate variables to store result of glGetActiveUniform
@@ -528,16 +575,17 @@ WEAK void halide_dev_run(
             GLint dim[4];
             GLint loc;
             for (int j = 0; j < 4; j++) {
-                dim[j] = d->buf->extent[j];
-                dim[j] = dim[j] > 0 ? dim[j] : 1;
+                dim[j] = std::max(d->buf->extent[j], 1);
             }
             // it would be nicer maybe to put this in the arg_map
             name_str = "dim_of_" + std::string(name);
             loc = glGetUniformLocation(program, name_str.c_str());
             if (loc!=-1) {
                 glUniform4iv(loc, 1, dim);
+#ifndef NDEBUG
                 printf("setting ivec4 arg %s to [%d, %d, %d, %d]\n",
                        name_str.c_str(), dim[0], dim[1], dim[2], dim[3]);
+#endif
             }
         }
     }
@@ -631,35 +679,28 @@ static float *random_image(int dim0, int dim1, int dim2, int dim3) {
 
 const char* fragment_shader_src = \
 "#version 120                                    \n"\
-"//*KNL*//knl//*KNL*//                           \n"\
-"uniform sampler2D texture;                      \n"\
-"uniform ivec4 dim_of_texture;                   \n"\
-"uniform float fade_factor;                      \n"\
-"uniform float useless;                          \n"\
+"//*KNL*//knl1//*KNL*//                           \n"\
 "varying vec2 pixcoord;                          \n"\
 "void main()                                     \n"\
 "{                                               \n"\
-"    vec4 tex_val = texture2D(texture, pixcoord/dim_of_texture.xy);\n"\
 "    //*OUT*//output//*OUT*//                    \n"\
-"    gl_FragColor = fade_factor*tex_val*tex_val; \n"\
+"    gl_FragColor = vec4(16.0f, 0, 0, 1); \n"\
 "}                                               \n"\
 "#version 120                                    \n"\
 "//*KNL*//knl2//*KNL*//                          \n"\
 "uniform sampler2D texture;                      \n"\
 "uniform ivec4 dim_of_texture;                   \n"\
-"uniform float fade_factor;                      \n"\
-"uniform float useless;                          \n"\
 "varying vec2 pixcoord;                          \n"\
 "void main()                                     \n"\
 "{                                               \n"\
-"    vec4 tex_val = texture2D(texture, pixcoord);\n"\
+"    vec4 tex_val = texture2D(texture, pixcoord/dim_of_texture.xy);\n"\
 "    //*OUT*//output//*OUT*//                    \n"\
-"    gl_FragColor = fade_factor*tex_val*tex_val; \n"\
+"    gl_FragColor = 0.01f + 0.5f*tex_val; \n"\
 "}                                               \n";
 
-int f(buffer_t *input, buffer_t *result, float fade_factor ) {
+int f(buffer_t *input, buffer_t *result) {
     SAY_HI();
-    const char* entry_name = "knl";
+    const char* entry_name1 = "knl1";
     
     int threadsX = result->extent[0];
     int threadsY = result->extent[1];
@@ -669,21 +710,36 @@ int f(buffer_t *input, buffer_t *result, float fade_factor ) {
     int blocksZ = 1; // don't care
     int shared_mem_bytes = 0; // don't care
     
-    char* arg_names[4];
-    arg_names[0] = "texture";
-    arg_names[1] = "output";
-    arg_names[2] = "fade_factor";
-    size_t argSizes[] = { 1, 1, 1, 0};
-    void* args[] = { &input->dev, &result->dev, &fade_factor, 0 };
+    char* arg_names[2];
+    arg_names[0] = "output";
+    size_t argSizes[] = { 1, 0};
+    void* args[] = { &input->dev, 0 };
     
     halide_dev_run(
-                   entry_name,
+                   entry_name1,
                    blocksX,  blocksY,  blocksZ,
                    threadsX, threadsY, threadsZ,
                    shared_mem_bytes,
                    arg_names,
                    argSizes,
                    args
+                   );
+
+    const char* entry_name2 = "knl2";
+    char* arg_names2[3];
+    arg_names2[0] = "texture";
+    arg_names2[1] = "output";
+    size_t argSizes2[] = { 1, 1, 0};
+    void* args2[] = { &input->dev, &result->dev, 0 };
+
+    halide_dev_run(
+                   entry_name2,
+                   blocksX,  blocksY,  blocksZ,
+                   threadsX, threadsY, threadsZ,
+                   shared_mem_bytes,
+                   arg_names2,
+                   argSizes2,
+                   args2
                    );
     
     return 0;
@@ -694,41 +750,38 @@ int main(int argc, char* argv[]) {
     printf("hello world!\n");
     halide_init_kernels(fragment_shader_src);
     
-    int W = 4, H = 5, C = 3;
+    int W = 4, H = 4, C = 1;
     
     buffer_t in, out;
     
     in.dev = 0;
-    in.host = (uint8_t*) random_image(W, H, C, 1);
+    in.host = 0;//(uint8_t*) random_image(W, H, C, 1);
     in.elem_size = sizeof(float);
-    in.extent[0] = W; in.extent[1] = H; in.extent[2] = C; in.extent[3] = 1;
+    in.extent[0] = W*H; in.extent[1] = 1; in.extent[2] = 1; in.extent[3] = 1;
     
     out.dev = 0;
     out.host = (uint8_t*) empty_image(W, H, C, 1);
     out.elem_size = sizeof(float);
     out.extent[0] = W; out.extent[1] = H; out.extent[2] = C; out.extent[3] = 1;
     
-    in.host_dirty = true;
+    //in.host_dirty = true;
     
     halide_dev_malloc(&in);
     halide_dev_malloc(&out);
-    halide_copy_to_dev(&in);
+    //halide_copy_to_dev(&in);
     
-    float fade_factor = 2.0;
-    f(&in, &out, fade_factor);
+    f(&in, &out);
     
     out.dev_dirty = true;
     halide_copy_to_host(&out);
     for (int y = 0; y < H; y++) {
         for (int x = 0; x < W; x++) {
             //printf("(");
-            for (int c = 0; c < 3; c++) {
-                int idx = y*W*3 + x*3 + c;
-                float tex_val = ((float *) in.host)[idx];
-                float ref = fade_factor*tex_val*tex_val;
+            for (int c = 0; c < C; c++) {
+                int idx = y*W*C + x*C + c;
+                float ref = 8.01f;
                 float result = ((float *) out.host)[idx];
-                //printf("%f ", result);
-                if (ref != result) {
+                if (fabs((ref-result)/result) > 1e-6) {
                     printf("mismatch at (%d, %d, %d), ref: %f  result: %f\n",
                            x, y, c, ref, result);
                     return -1;
