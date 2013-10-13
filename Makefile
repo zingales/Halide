@@ -1,12 +1,13 @@
 # 'make' builds libHalide.a, the internal test suite, and runs the internal test suite
-# 'make tests' builds and runs all the end-to-end tests in the test subdirectory
-# 'make test_foo' builds and runs test/foo.cpp for any cpp file in the test folder
+# 'make run_tests' builds and runs all the end-to-end tests in the test subdirectory
+# 'make {correctness,error,performance}_foo' builds and runs test/{...}/foo.cpp for any
+#     cpp file in the corresponding subdirectoy of the test folder
 # 'make test_apps' checks some of the apps build and run (but does not check their output)
 
 CXX ?= g++
 LLVM_CONFIG ?= llvm-config
 LLVM_COMPONENTS= $(shell $(LLVM_CONFIG) --components)
-LLVM_VERSION = $(shell $(LLVM_CONFIG) --version)
+LLVM_VERSION = $(shell $(LLVM_CONFIG) --version | cut -b 1-3)
 CLANG ?= clang
 CLANG_VERSION = $(shell $(CLANG) --version)
 LLVM_BINDIR = $(shell $(LLVM_CONFIG) --bindir)
@@ -55,7 +56,7 @@ X86_ARCHS=$(if $(WITH_X86), x86_32 x86_32_sse41 x86_64 x86_64_sse41 x86_64_avx, 
 X86_LLVM_CONFIG_LIB=$(if $(WITH_X86), x86, )
 
 ARM_CXX_FLAGS=$(if $(WITH_ARM), -DWITH_ARM=1, )
-ARM_ARCHS=$(if $(WITH_ARM), arm arm_android , )
+ARM_ARCHS=$(if $(WITH_ARM), arm arm_android arm_ios , )
 ARM_LLVM_CONFIG_LIB=$(if $(WITH_ARM), arm, )
 
 PTX_CXX_FLAGS=$(if $(WITH_PTX), -DWITH_PTX=1, )
@@ -108,10 +109,10 @@ BIN_DIR = bin
 DISTRIB_DIR=distrib
 endif
 
-SOURCE_FILES = CodeGen.cpp CodeGen_Internal.cpp CodeGen_X86.cpp CodeGen_GPU_Host.cpp CodeGen_PTX_Dev.cpp CodeGen_OpenCL_Dev.cpp CodeGen_OpenGL_Dev.cpp CodeGen_GPU_Dev.cpp CodeGen_Posix.cpp CodeGen_ARM.cpp IR.cpp IRMutator.cpp IRPrinter.cpp IRVisitor.cpp CodeGen_C.cpp Substitute.cpp ModulusRemainder.cpp Bounds.cpp Derivative.cpp OneToOne.cpp Func.cpp Simplify.cpp IREquality.cpp Util.cpp Function.cpp IROperator.cpp Lower.cpp Debug.cpp Parameter.cpp Reduction.cpp RDom.cpp Profiling.cpp Tracing.cpp StorageFlattening.cpp VectorizeLoops.cpp UnrollLoops.cpp BoundsInference.cpp IRMatch.cpp StmtCompiler.cpp integer_division_table.cpp SlidingWindow.cpp StorageFolding.cpp InlineReductions.cpp RemoveTrivialForLoops.cpp Deinterleave.cpp DebugToFile.cpp Type.cpp JITCompiledModule.cpp EarlyFree.cpp UniquifyVariableNames.cpp CSE.cpp Tuple.cpp
+SOURCE_FILES = CodeGen.cpp CodeGen_Internal.cpp CodeGen_X86.cpp CodeGen_GPU_Host.cpp CodeGen_PTX_Dev.cpp CodeGen_OpenCL_Dev.cpp CodeGen_OpenGL_Dev.cpp CodeGen_GPU_Dev.cpp CodeGen_Posix.cpp CodeGen_ARM.cpp IR.cpp IRMutator.cpp IRPrinter.cpp IRVisitor.cpp CodeGen_C.cpp Substitute.cpp ModulusRemainder.cpp Bounds.cpp Derivative.cpp OneToOne.cpp Func.cpp Simplify.cpp IREquality.cpp Util.cpp Function.cpp IROperator.cpp Lower.cpp Debug.cpp Parameter.cpp Reduction.cpp RDom.cpp Profiling.cpp Tracing.cpp StorageFlattening.cpp VectorizeLoops.cpp UnrollLoops.cpp BoundsInference.cpp IRMatch.cpp StmtCompiler.cpp integer_division_table.cpp SlidingWindow.cpp StorageFolding.cpp InlineReductions.cpp RemoveTrivialForLoops.cpp Deinterleave.cpp DebugToFile.cpp Type.cpp JITCompiledModule.cpp EarlyFree.cpp UniquifyVariableNames.cpp CSE.cpp Tuple.cpp Lerp.cpp
 
 # The externally-visible header files that go into making Halide.h. Don't include anything here that includes llvm headers.
-HEADER_FILES = Util.h Type.h Argument.h Bounds.h BoundsInference.h Buffer.h buffer_t.h CodeGen_C.h CodeGen.h CodeGen_X86.h CodeGen_GPU_Host.h CodeGen_PTX_Dev.h CodeGen_OpenCL_Dev.h CodeGen_OpenGL_Dev.h CodeGen_GPU_Dev.h Deinterleave.h Derivative.h OneToOne.h Extern.h Func.h Function.h Image.h InlineReductions.h integer_division_table.h IntrusivePtr.h IREquality.h IR.h IRMatch.h IRMutator.h IROperator.h IRPrinter.h IRVisitor.h JITCompiledModule.h Lambda.h Debug.h Lower.h MainPage.h ModulusRemainder.h Parameter.h Param.h RDom.h Reduction.h RemoveTrivialForLoops.h Schedule.h Scope.h Simplify.h SlidingWindow.h StmtCompiler.h StorageFlattening.h StorageFolding.h Substitute.h Profiling.h Tracing.h UnrollLoops.h Var.h VectorizeLoops.h CodeGen_Posix.h CodeGen_ARM.h DebugToFile.h EarlyFree.h UniquifyVariableNames.h CSE.h Tuple.h
+HEADER_FILES = Util.h Type.h Argument.h Bounds.h BoundsInference.h Buffer.h buffer_t.h CodeGen_C.h CodeGen.h CodeGen_X86.h CodeGen_GPU_Host.h CodeGen_PTX_Dev.h CodeGen_OpenCL_Dev.h CodeGen_OpenGL_Dev.h CodeGen_GPU_Dev.h Deinterleave.h Derivative.h OneToOne.h Extern.h Func.h Function.h Image.h InlineReductions.h integer_division_table.h IntrusivePtr.h IREquality.h IR.h IRMatch.h IRMutator.h IROperator.h IRPrinter.h IRVisitor.h JITCompiledModule.h Lambda.h Debug.h Lower.h MainPage.h ModulusRemainder.h Parameter.h Param.h RDom.h Reduction.h RemoveTrivialForLoops.h Schedule.h Scope.h Simplify.h SlidingWindow.h StmtCompiler.h StorageFlattening.h StorageFolding.h Substitute.h Profiling.h Tracing.h UnrollLoops.h Var.h VectorizeLoops.h CodeGen_Posix.h CodeGen_ARM.h DebugToFile.h EarlyFree.h UniquifyVariableNames.h CSE.h Tuple.h Lerp.h
 
 SOURCES = $(SOURCE_FILES:%.cpp=src/%.cpp)
 OBJECTS = $(SOURCE_FILES:%.cpp=$(BUILD_DIR)/%.o)
@@ -152,6 +153,7 @@ RUNTIME_OPTS_x86_32 = -m32 -march=k8
 RUNTIME_OPTS_x86_32_sse41 = -m32 -march=penryn
 RUNTIME_OPTS_arm = -m32
 RUNTIME_OPTS_arm_android = -m32
+RUNTIME_OPTS_arm_ios = -m32 -march=cortex-a9 -Xclang -triple=armv7-apple-ios
 RUNTIME_OPTS_opencl_host = $(RUNTIME_OPTS_x86_64)
 RUNTIME_OPTS_opengl_host = $(RUNTIME_OPTS_x86_64)
 RUNTIME_OPTS_ptx_host = $(RUNTIME_OPTS_x86_64)
@@ -170,10 +172,11 @@ RUNTIME_LL_STUBS_x86_64_sse41 = src/runtime/x86.ll src/runtime/x86_sse41.ll src/
 RUNTIME_LL_STUBS_x86_64_avx = src/runtime/x86.ll src/runtime/x86_sse41.ll src/runtime/x86_avx.ll src/runtime/posix_math.ll
 RUNTIME_LL_STUBS_arm = src/runtime/arm.ll src/runtime/posix_math.ll
 RUNTIME_LL_STUBS_arm_android = src/runtime/arm.ll src/runtime/posix_math.ll
-RUNTIME_LL_STUBS_opencl_host = $(RUNTIME_LL_STUBS_x86) src/runtime/posix_math.ll
-RUNTIME_LL_STUBS_opengl_host = $(RUNTIME_LL_STUBS_x86) src/runtime/posix_math.ll
-RUNTIME_LL_STUBS_ptx_host = $(RUNTIME_LL_STUBS_x86) src/runtime/posix_math.ll
-RUNTIME_LL_STUBS_ptx_host_debug = $(RUNTIME_LL_STUBS_x86) src/runtime/posix_math.ll
+RUNTIME_LL_STUBS_arm_ios = src/runtime/arm.ll src/runtime/posix_math.ll
+RUNTIME_LL_STUBS_opencl_host = $(RUNTIME_LL_STUBS_x86_64_sse41)
+RUNTIME_LL_STUBS_opengl_host = $(RUNTIME_LL_STUBS_x86_64_sse41)
+RUNTIME_LL_STUBS_ptx_host = $(RUNTIME_LL_STUBS_x86_64_sse41)
+RUNTIME_LL_STUBS_ptx_host_debug = $(RUNTIME_LL_STUBS_x86_64_sse41)
 RUNTIME_LL_STUBS_ptx_dev = src/runtime/ptx_dev.ll
 RUNTIME_LL_STUBS_x86_32_nacl = src/runtime/x86.ll src/runtime/posix_math.ll
 RUNTIME_LL_STUBS_x86_32_sse41_nacl = src/runtime/x86.ll src/runtime/x86_sse41.ll src/runtime/posix_math.ll
@@ -210,7 +213,6 @@ $(BUILD_DIR)/%.o: src/%.cpp src/%.h $(BUILD_DIR)/llvm_ok
 clean:
 	rm -rf $(BIN_DIR)/*
 	rm -rf $(BUILD_DIR)/*
-	rm -rf $(DISTRIB_DIR)/*
 	rm -rf include/*
 	rm -rf doc
 
@@ -225,6 +227,7 @@ test_correctness: $(CORRECTNESS_TESTS:test/correctness/%.cpp=test_%)
 test_performance: $(PERFORMANCE_TESTS:test/performance/%.cpp=performance_%)
 test_errors: $(ERROR_TESTS:test/error/%.cpp=error_%)
 test_tutorials: $(TUTORIALS:tutorial/%.cpp=tutorial_%)
+test_valgrind: $(CORRECTNESS_TESTS:test/correctness/%.cpp=valgrind_%)
 
 run_tests: test_correctness test_errors test_tutorials
 	make test_performance
@@ -252,6 +255,17 @@ $(BIN_DIR)/tutorial_%: tutorial/%.cpp $(BIN_DIR)/libHalide.so include/Halide.h
 test_%: $(BIN_DIR)/test_%
 	@-mkdir -p tmp
 	cd tmp ; DYLD_LIBRARY_PATH=../$(BIN_DIR) LD_LIBRARY_PATH=../$(BIN_DIR) ../$<
+	@-echo
+
+valgrind_%: $(BIN_DIR)/test_%
+	@-mkdir -p tmp
+	cd tmp ; DYLD_LIBRARY_PATH=../$(BIN_DIR) LD_LIBRARY_PATH=../$(BIN_DIR) valgrind --error-exitcode=-1 ../$<
+	@-echo
+
+# This test is *supposed* to do an out-of-bounds read, so skip it when testing under valgrind
+valgrind_tracing_stack: $(BIN_DIR)/test_tracing_stack
+	@-mkdir -p tmp
+	cd tmp ; DYLD_LIBRARY_PATH=../$(BIN_DIR) LD_LIBRARY_PATH=../$(BIN_DIR) ../$(BIN_DIR)/test_tracing_stack
 	@-echo
 
 performance_%: $(BIN_DIR)/performance_%
@@ -292,6 +306,10 @@ endif
 endif
 
 ifneq (,$(findstring Apple clang version 4.0,$(CLANG_VERSION)))
+CLANG_OK=yes
+endif
+
+ifneq (,$(findstring Apple LLVM version 5.0,$(CLANG_VERSION)))
 CLANG_OK=yes
 endif
 
@@ -337,7 +355,7 @@ docs: doc
 doc: src test
 	doxygen
 
-$(DISTRIB_DIR)/halide.tgz: all
+$(DISTRIB_DIR)/halide.tgz: $(BIN_DIR)/libHalide.a $(BIN_DIR)/libHalide.so include/Halide.h include/HalideRuntime.h
 	mkdir -p $(DISTRIB_DIR)/include $(DISTRIB_DIR)/lib
 	cp $(BIN_DIR)/libHalide.a $(BIN_DIR)/libHalide.so $(DISTRIB_DIR)/lib
 	cp include/Halide.h $(DISTRIB_DIR)/include

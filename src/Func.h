@@ -29,10 +29,11 @@ class FuncRefExpr;
 
 class FuncRefVar {
     Internal::Function func;
+    int implicit_placeholder_pos;
     std::vector<std::string> args;
-    void add_implicit_vars(std::vector<std::string> &args, const std::vector<Expr> &e) const;
+    std::vector<std::string> args_with_implicit_vars(const std::vector<Expr> &e) const;
 public:
-    FuncRefVar(Internal::Function, const std::vector<Var> &);
+    FuncRefVar(Internal::Function, const std::vector<Var> &, int placeholder_pos = -1);
 
     /**  Use this as the left-hand-side of a definition. */
     EXPORT void operator=(Expr);
@@ -48,10 +49,10 @@ public:
      */
     EXPORT void operator+=(Expr);
 
-    /** Define this function as a sum reduction over the negative of
-     * the given expression. The expression should refer to some RDom
-     * to sum over. If the function does not already have a pure
-     * definition, this sets it to zero.
+    /** Define this function as a sum reduction over the given
+     * expression. The expression should refer to some RDom to sum
+     * over. If the function does not already have a pure definition,
+     * this sets it to zero.
      */
     EXPORT void operator-=(Expr);
 
@@ -99,11 +100,14 @@ public:
  */
 class FuncRefExpr {
     Internal::Function func;
+    int implicit_placeholder_pos;
     std::vector<Expr> args;
-    void add_implicit_vars(std::vector<Expr> &args, const std::vector<Expr> &e) const;
+    std::vector<Expr> args_with_implicit_vars(const std::vector<Expr> &e) const;
 public:
-    FuncRefExpr(Internal::Function, const std::vector<Expr> &);
-    FuncRefExpr(Internal::Function, const std::vector<std::string> &);
+    FuncRefExpr(Internal::Function, const std::vector<Expr> &,
+                int placeholder_pos = -1);
+    FuncRefExpr(Internal::Function, const std::vector<std::string> &,
+                int placeholder_pos = -1);
 
     /** Use this as the left-hand-side of a reduction definition (see
      * \ref RDom). The function must already have a pure definition.
@@ -121,10 +125,10 @@ public:
      */
     EXPORT void operator+=(Expr);
 
-    /** Define this function as a sum reduction over the negative of
-     * the given expression. The expression should refer to some RDom
-     * to sum over. If the function does not already have a pure
-     * definition, this sets it to zero.
+    /** Define this function as a sum reduction over the given
+     * expression. The expression should refer to some RDom to sum
+     * over. If the function does not already have a pure definition,
+     * this sets it to zero.
      */
     EXPORT void operator-=(Expr);
 
@@ -179,6 +183,8 @@ public:
      * variable name as either the inner or outer variable. */
     EXPORT ScheduleHandle &split(Var old, Var outer, Var inner, Expr factor);
 
+    EXPORT ScheduleHandle &fuse(Var inner, Var outer, Var fused);
+
     /** Mark a dimension to be traversed in parallel */
     EXPORT ScheduleHandle &parallel(Var var);
 
@@ -228,6 +234,10 @@ public:
      * the new outer dimensions */
     EXPORT ScheduleHandle &tile(Var x, Var y, Var xi, Var yi, Expr xfactor, Expr yfactor);
 
+    /** Reorder variables to have the given nesting order, from
+     * innermost out */
+    EXPORT ScheduleHandle &reorder(const std::vector<Var> &vars);
+
     /** Reorder two dimensions so that x is traversed inside y. Does
      * not affect the nesting order of other dimensions. E.g, if you
      * say foo(x, y, z, w) = bar; foo.reorder(w, x); then foo will be
@@ -246,6 +256,26 @@ public:
     /** Reorder five dimensions to have the given nesting order, from
      * innermost out */
     EXPORT ScheduleHandle &reorder(Var x, Var y, Var z, Var w, Var t);
+
+    /** Reorder six dimensions to have the given nesting order, from
+     * innermost out */
+    EXPORT ScheduleHandle &reorder(Var x, Var y, Var z, Var w, Var t1, Var t2);
+
+    /** Reorder seven dimensions to have the given nesting order, from
+     * innermost out */
+    EXPORT ScheduleHandle &reorder(Var x, Var y, Var z, Var w, Var t1, Var t2, Var t3);
+
+    /** Reorder eight dimensions to have the given nesting order, from
+     * innermost out */
+    EXPORT ScheduleHandle &reorder(Var x, Var y, Var z, Var w, Var t1, Var t2, Var t3, Var t4);
+
+    /** Reorder nine dimensions to have the given nesting order, from
+     * innermost out */
+    EXPORT ScheduleHandle &reorder(Var x, Var y, Var z, Var w, Var t1, Var t2, Var t3, Var t4, Var t5);
+
+    /** Reorder ten dimensions to have the given nesting order, from
+     * innermost out */
+    EXPORT ScheduleHandle &reorder(Var x, Var y, Var z, Var w, Var t1, Var t2, Var t3, Var t4, Var t5, Var t6);
 
     /** Rename a dimension. Equivalent to split with a inner size of one. */
     EXPORT ScheduleHandle &rename(Var old_name, Var new_name);
@@ -298,10 +328,6 @@ public:
 
 };
 
-
-
-
-
 /** A halide function. This class represents one stage in a Halide
  * pipeline, and is the unit by which we schedule things. By default
  * they are aggressively inlined, so you are encouraged to make lots
@@ -317,8 +343,8 @@ class Func {
      * up with 'implicit' vars with canonical names. This lets you
      * pass around partially-applied halide functions. */
     // @{
-    void add_implicit_vars(std::vector<Var> &) const;
-    void add_implicit_vars(std::vector<Expr> &) const;
+    int add_implicit_vars(std::vector<Var> &) const;
+    int add_implicit_vars(std::vector<Expr> &) const;
     // @}
 
     /** The lowered imperative form of this function. Cached here so
@@ -344,8 +370,13 @@ class Func {
     /** The current custom parallel task launcher and handler for
      * realizing this function. May be NULL. */
     // @{
-    void (*custom_do_par_for)(void (*)(int, uint8_t *), int, int, uint8_t *);
-    void (*custom_do_task)(void (*)(int, uint8_t *), int, uint8_t *);
+    int (*custom_do_par_for)(int (*)(int, uint8_t *), int, int, uint8_t *);
+    int (*custom_do_task)(int (*)(int, uint8_t *), int, uint8_t *);
+    // @}
+
+    /** The current custom tracing functions. May be NULL. */
+    // @{
+    void (*custom_trace)(const char *, int32_t, int32_t, int32_t, int32_t, int32_t, const void *, int32_t, const int32_t *);
     // @}
 
     /** Pointers to current values of the automatically inferred
@@ -507,17 +538,15 @@ public:
     EXPORT void set_error_handler(void (*handler)(const char *));
 
     /** Set a custom malloc and free for halide to use. Malloc should
-     * return 32-byte aligned chunks of memory, with 32-bytes extra
-     * allocated on the start and end so that vector loads can spill
-     * off the end slightly. Metadata (e.g. the base address of the
-     * region allocated) can go in this margin - it is only read, not
-     * written. If you are compiling statically, you can also just
-     * define your own functions with signatures
+     * return 32-byte aligned chunks of memory. If compiling
+     * statically, routines with appropriate signatures can be
+     * provided directly
      \code
-     extern "C" void *malloc(size_t)
+     extern "C" void *halide_malloc(size_t)
      extern "C" void halide_free(void *)
      \endcode
-     * These will clobber Halide's versions.
+     * These will clobber Halide's versions. See \file HalideRuntime.h
+     * for declarations.
      */
     EXPORT void set_custom_allocator(void *(*malloc)(size_t), void (*free)(void *));
 
@@ -526,8 +555,8 @@ public:
      * additional bookkeeping at the granularity of parallel
      * tasks. The default implementation does this:
      \code
-     extern "C" void halide_do_task(void (*f)(int, uint8_t *), int idx, uint8_t *state) {
-         f(idx, state);
+     extern "C" int halide_do_task(int (*f)(int, uint8_t *), int idx, uint8_t *state) {
+         return f(idx, state);
      }
      \endcode
      * If you are statically compiling, you can also just define your
@@ -537,23 +566,41 @@ public:
      * If you're trying to use a custom parallel runtime, you probably
      * don't want to call this. See instead \ref Func::set_custom_do_par_for .
     */
-    EXPORT void set_custom_do_task(void (*custom_do_task)(void (*)(int, uint8_t *), int, uint8_t *));
+    EXPORT void set_custom_do_task(int (*custom_do_task)(int (*)(int, uint8_t *), int, uint8_t *));
 
     /** Set a custom parallel for loop launcher. Useful if your app
      * already manages a thread pool. The default implementation is
      * equivalent to this:
      \code
-     extern "C" void halide_do_par_for(void (*f)(int uint8_t *), int min, int extent, uint8_t *state) {
+     extern "C" int halide_do_par_for(int (*f)(int uint8_t *), int min, int extent, uint8_t *state) {
+         int exit_status = 0;
          parallel for (int idx = min; idx < min+extent; idx++) {
-             halide_do_task(f, idx, state);
+             int job_status = halide_do_task(f, idx, state);
+             if (job_status) exit_status = job_status;
          }
+         return exit_status;
      }
      \endcode
+     *
+     * However, notwithstanding the above example code, if one task
+     * fails, we may skip over other tasks, and if two tasks return
+     * different error codes, we may select one arbitrarily to return.
+     *
      * If you are statically compiling, you can also just define your
      * own version of the above function, and it will clobber Halide's
      * version.
      */
-    EXPORT void set_custom_do_par_for(void (*custom_do_par_for)(void (*)(int, uint8_t *), int, int, uint8_t *));
+    EXPORT void set_custom_do_par_for(int (*custom_do_par_for)(int (*)(int, uint8_t *), int, int, uint8_t *));
+
+    /** Set custom routines to call when tracing is enabled. Call this
+     * on the output Func of your pipeline. This then sets custom
+     * routines for the entire pipeline, not just calls to this
+     * Func.
+     *
+     * If you are statically compiling, you can also just define your
+     * own versions of the tracing functions (see HalideRuntime.h),
+     * and they will clobber Halide's versions. */
+    EXPORT void set_custom_trace(Internal::JITCompiledModule::TraceFn);
 
     /** When this function is compiled, include code that dumps its values
      * to a file after it is realized, for the purpose of debugging.
@@ -617,6 +664,34 @@ public:
     /** Is this function a reduction? */
     EXPORT bool is_reduction() const;
 
+    /** Is this function external? */
+    EXPORT bool is_extern() const;
+
+    /** Add an extern definition for this Func. */
+    // @{
+    EXPORT void define_extern(const std::string &function_name,
+                              const std::vector<ExternFuncArgument> &params,
+                              Type t,
+                              int dimensionality) {
+        define_extern(function_name, params, Internal::vec<Type>(t), dimensionality);
+    }
+
+    EXPORT void define_extern(const std::string &function_name,
+                              const std::vector<ExternFuncArgument> &params,
+                              const std::vector<Type> &types,
+                              int dimensionality);
+    // @}
+
+    /** Get the types of the outputs of this Func. */
+    EXPORT const std::vector<Type> &output_types() const;
+
+    /** Get the number of outputs of this Func. */
+    EXPORT int outputs() const;
+
+    /** Get the name of the extern function called for an extern
+     * definition. */
+    EXPORT const std::string &extern_function_name() const;
+
     /** The dimensionality (number of arguments) of this
      * function. Zero if the function is not yet defined. */
     EXPORT int dimensions() const;
@@ -659,6 +734,7 @@ public:
      * meanings. */
     // @{
     EXPORT Func &split(Var old, Var outer, Var inner, Expr factor);
+    EXPORT Func &fuse(Var inner, Var outer, Var fused);
     EXPORT Func &parallel(Var var);
     EXPORT Func &vectorize(Var var);
     EXPORT Func &unroll(Var var);
@@ -667,10 +743,16 @@ public:
     EXPORT Func &bound(Var var, Expr min, Expr extent);
     EXPORT Func &tile(Var x, Var y, Var xo, Var yo, Var xi, Var yi, Expr xfactor, Expr yfactor);
     EXPORT Func &tile(Var x, Var y, Var xi, Var yi, Expr xfactor, Expr yfactor);
+    EXPORT Func &reorder(const std::vector<Var> &vars);
     EXPORT Func &reorder(Var x, Var y);
     EXPORT Func &reorder(Var x, Var y, Var z);
     EXPORT Func &reorder(Var x, Var y, Var z, Var w);
     EXPORT Func &reorder(Var x, Var y, Var z, Var w, Var t);
+    EXPORT Func &reorder(Var x, Var y, Var z, Var w, Var t1, Var t2);
+    EXPORT Func &reorder(Var x, Var y, Var z, Var w, Var t1, Var t2, Var t3);
+    EXPORT Func &reorder(Var x, Var y, Var z, Var w, Var t1, Var t2, Var t3, Var t4);
+    EXPORT Func &reorder(Var x, Var y, Var z, Var w, Var t1, Var t2, Var t3, Var t4, Var t5);
+    EXPORT Func &reorder(Var x, Var y, Var z, Var w, Var t1, Var t2, Var t3, Var t4, Var t5, Var t6);
     EXPORT Func &rename(Var old_name, Var new_name);
     EXPORT Func &cuda_threads(Var thread_x);
     EXPORT Func &cuda_threads(Var thread_x, Var thread_y);
@@ -948,6 +1030,21 @@ public:
      * update step can be meaningfully manipulated (see \ref RDom) */
     EXPORT ScheduleHandle update();
 
+    /** Trace all loads from this Func by emitting calls to
+     * halide_trace_load. If the Func is inlined, this has no
+     * effect. */
+    EXPORT Func &trace_loads();
+
+    /** Trace all stores to the buffer backing this Func by emitting
+     * calls to halide_trace_store. If the Func is inlined, this call
+     * has no effect. */
+    EXPORT Func &trace_stores();
+
+    /** Trace all realizations of this Func by emitting calls to
+     * halide_trace_produce, halide_trace_update,
+     * halide_trace_consume, and halide_trace_dispose. */
+    EXPORT Func &trace_realizations();
+
     /** Get a handle on the internal halide function that this Func
      * represents. Useful if you want to do introspection on Halide
      * functions */
@@ -974,34 +1071,18 @@ public:
      Func f, g;
      Var x;
      g(x) = ...
-     f() = g * 2;
+     f(_) = g * 2;
      \endcode
     */
     operator Expr() const {
-        return (*this)();
+        return (*this)(_);
     }
 
-    /* These operators are being removed because they break putting
-     * Funcs in STL containers, the python bindings, and have
-     * generally caused confusion.
-
-    ** Define a function to take a number of arguments according to
-     * the implicit variables present in the given expression, and
-     * return the given expression. The expression may not have free
-     * variables. *
-    void operator=(Expr e) {
-        (*this)() = e;
+    /** Use a Func as an argument to an external stage. */
+    operator ExternFuncArgument() const {
+        return ExternFuncArgument(func);
     }
 
-    ** Define a function to simply call another function. Note that
-     * this is not equivalent to the standard c++ operator=. We opt
-     * instead for consistency with Halide function definition, of
-     * which this is a degenerate case. *
-    void operator=(const Func &f) {
-        (*this)() = f();
-    }
-
-    */
 };
 
 /** JIT-Compile and run enough code to evaluate a Halide
@@ -1011,7 +1092,7 @@ template<typename T>
 T evaluate(Expr e) {
     assert(e.type() == type_of<T>());
     Func f;
-    f() = e;
+    f(_) = e;
     Image<T> im = f.realize();
     return im(0);
 }
@@ -1023,7 +1104,7 @@ void evaluate(Tuple t, A *a, B *b) {
     assert(t[0].type() == type_of<A>());
     assert(t[1].type() == type_of<B>());
     Func f;
-    f() = t;
+    f(_) = t;
     Realization r = f.realize();
     *a = Image<A>(r[0])(0);
     *b = Image<B>(r[1])(0);
@@ -1035,7 +1116,7 @@ void evaluate(Tuple t, A *a, B *b, C *c) {
     assert(t[1].type() == type_of<B>());
     assert(t[2].type() == type_of<C>());
     Func f;
-    f() = t;
+    f(_) = t;
     Realization r = f.realize();
     *a = Image<A>(r[0])(0);
     *b = Image<B>(r[1])(0);
@@ -1049,7 +1130,7 @@ void evaluate(Tuple t, A *a, B *b, C *c, D *d) {
     assert(t[2].type() == type_of<C>());
     assert(t[3].type() == type_of<D>());
     Func f;
-    f() = t;
+    f(_) = t;
     Realization r = f.realize();
     *a = Image<A>(r[0])(0);
     *b = Image<B>(r[1])(0);
@@ -1059,5 +1140,6 @@ void evaluate(Tuple t, A *a, B *b, C *c, D *d) {
 // @}
 
 }
+
 
 #endif

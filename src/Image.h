@@ -67,6 +67,42 @@ private:
         }
     }
 
+    bool add_implicit_args_if_placeholder(std::vector<Expr> &args,
+                                          Expr last_arg,
+                                          int total_args,
+                                          bool placeholder_seen) const {
+        const Internal::Variable *var = last_arg.as<Internal::Variable>();
+        bool is_placeholder = var != NULL && Var::is_placeholder(var->name);
+        if (is_placeholder) {
+            assert(!placeholder_seen && "Only one placeholder ('_') allowed in argument list for Image.");
+            placeholder_seen = true;
+
+            // The + 1 in the conditional is because one provided argument is an placeholder
+            for (int i = 0; i < (dims - total_args + 1); i++) {
+                args.push_back(Var::implicit(i));
+            }
+        } else {
+            args.push_back(last_arg);
+        }
+
+#if HALIDE_WARNINGS_FOR_OLD_IMPLICITS
+        if (!is_placeholder && !placeholder_seen &&
+            (int)args.size() == total_args &&
+            (int)args.size() < dims) {
+            std::cout << "Implicit arguments without placeholders ('_') are deprecated. "
+                      << "Adding " << dims - args.size()
+                      << " arguments to Image " << buffer.name() << '\n';
+            int i = 0;
+            while ((int)args.size() < dims) {
+                args.push_back(Var::implicit(i++));
+
+            }
+        }
+#endif
+
+        return is_placeholder;
+    }
+
 public:
     /** Construct an undefined image handle */
     Image() : origin(NULL), stride_0(0), stride_1(0), stride_2(0), stride_3(0), dims(0) {}
@@ -183,20 +219,26 @@ public:
     }
 
     /** Get the extent of dimension 0, which by convention we use as
-     * the width of the image */
+     * the width of the image. Unlike extent(0), returns one if the
+     * buffer is zero-dimensional. */
     int width() const {
+        if (dimensions() < 1) return 1;
         return extent(0);
     }
 
     /** Get the extent of dimension 1, which by convention we use as
-     * the height of the image */
+     * the height of the image. Unlike extent(1), returns one if the
+     * buffer has fewer than two dimensions. */
     int height() const {
+        if (dimensions() < 2) return 1;
         return extent(1);
     }
 
     /** Get the extent of dimension 2, which by convention we use as
-     * the number of color channels (often 3) */
+     * the number of color channels (often 3). Unlike extent(2),
+     * returns one if the buffer has fewer than three dimensions. */
     int channels() const {
+        if (dimensions() < 3) return 1;
         return extent(2);
     }
 
@@ -262,11 +304,8 @@ public:
      * location is composed of enough implicit variables to match the
      * dimensionality of the image (see \ref Var::implicit) */
     Expr operator()() const {
-        assert(dims >= 0);
+        assert(dims == 0);
         std::vector<Expr> args;
-        for (int i = 0; args.size() < (size_t)dims; i++) {
-            args.push_back(Var::implicit(i));
-        }
         return Internal::Call::make(buffer, args);
     }
 
@@ -275,12 +314,11 @@ public:
      * the dimensionality of the image (see \ref Var::implicit) */
     // @{
     Expr operator()(Expr x) const {
-        assert(dims >= 1);
         std::vector<Expr> args;
-        args.push_back(x);
-        for (int i = 0; args.size() < (size_t)dims; i++) {
-            args.push_back(Var::implicit(i));
-        }
+        bool placeholder_seen = false;
+        placeholder_seen |= add_implicit_args_if_placeholder(args, x, 1, placeholder_seen);
+
+        assert(args.size() == (size_t)dims);
 
         ImageParam::check_arg_types(buffer.name(), &args);
 
@@ -288,13 +326,12 @@ public:
     }
 
     Expr operator()(Expr x, Expr y) const {
-        assert(dims >= 2);
         std::vector<Expr> args;
-        args.push_back(x);
-        args.push_back(y);
-        for (int i = 0; args.size() < (size_t)dims; i++) {
-            args.push_back(Var::implicit(i));
-        }
+        bool placeholder_seen = false;
+        placeholder_seen |= add_implicit_args_if_placeholder(args, x, 2, placeholder_seen);
+        placeholder_seen |= add_implicit_args_if_placeholder(args, y, 2, placeholder_seen);
+
+        assert(args.size() == (size_t)dims);
 
         ImageParam::check_arg_types(buffer.name(), &args);
 
@@ -302,14 +339,13 @@ public:
     }
 
     Expr operator()(Expr x, Expr y, Expr z) const {
-        assert(dims >= 3);
         std::vector<Expr> args;
-        args.push_back(x);
-        args.push_back(y);
-        args.push_back(z);
-        for (int i = 0; args.size() < (size_t)dims; i++) {
-            args.push_back(Var::implicit(i));
-        }
+        bool placeholder_seen = false;
+        placeholder_seen |= add_implicit_args_if_placeholder(args, x, 3, placeholder_seen);
+        placeholder_seen |= add_implicit_args_if_placeholder(args, y, 3, placeholder_seen);
+        placeholder_seen |= add_implicit_args_if_placeholder(args, z, 3, placeholder_seen);
+
+        assert(args.size() == (size_t)dims);
 
         ImageParam::check_arg_types(buffer.name(), &args);
 
@@ -317,15 +353,14 @@ public:
     }
 
     Expr operator()(Expr x, Expr y, Expr z, Expr w) const {
-        assert(dims >= 4);
         std::vector<Expr> args;
-        args.push_back(x);
-        args.push_back(y);
-        args.push_back(z);
-        args.push_back(w);
-        for (int i = 0; args.size() < (size_t)dims; i++) {
-            args.push_back(Var::implicit(i));
-        }
+        bool placeholder_seen = false;
+        placeholder_seen |= add_implicit_args_if_placeholder(args, x, 4, placeholder_seen);
+        placeholder_seen |= add_implicit_args_if_placeholder(args, y, 4, placeholder_seen);
+        placeholder_seen |= add_implicit_args_if_placeholder(args, z, 4, placeholder_seen);
+        placeholder_seen |= add_implicit_args_if_placeholder(args, w, 4, placeholder_seen);
+
+        assert(args.size() == (size_t)dims);
 
         ImageParam::check_arg_types(buffer.name(), &args);
 
@@ -334,7 +369,7 @@ public:
     // @}
 
     /** Get a pointer to the raw buffer_t that this image holds */
-    operator buffer_t *() const {return buffer.raw_buffer();}
+    buffer_t *raw_buffer() const {return buffer.raw_buffer();}
 
     /** Get a handle on the Buffer that this image holds */
     operator Buffer() const {return buffer;}
@@ -342,6 +377,11 @@ public:
     /** Convert this image to an argument to a halide pipeline. */
     operator Argument() const {
         return Argument(buffer);
+    }
+
+    /** Convert this image to an argument to an extern stage. */
+    operator ExternFuncArgument() const {
+        return ExternFuncArgument(buffer);
     }
 
     /** Treating the image as an Expr is equivalent to call it with no
@@ -357,7 +397,7 @@ public:
      * position (x, y) equal to twice the value of the image at the
      * same location.
      */
-    operator Expr() const {return (*this)();}
+    operator Expr() const {return (*this)(_);}
 
 
 };

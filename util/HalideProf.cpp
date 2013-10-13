@@ -12,6 +12,8 @@
 namespace {
 
   const char kToplevel[] = "$total$";
+  const char kOverhead[] = "$overhead$";
+  const char kIgnore[] = "$ignore$";
 
   struct OpInfo {
     std::string op_type;
@@ -19,24 +21,27 @@ namespace {
     std::string parent_type;
     std::string parent_name;
     // number of times called
-    uint64_t count;
-    // ticks used (processor specific, no fixed time intercal)
-    uint64_t ticks;
-    // usec is actually only measured for $total$;
+    int64_t count;
+    // ticks used (processor specific, no fixed time interval)
+    int64_t ticks;
+    // nsec is actually only measured for $total$;
     // it's (approximated) calculated for all others
-    double usec;
+    double nsec;
     // percentage of total ticks, [0.0..1.0]
     double percent;
-    // ticks/usec/percent used by this op alone (not including callees)
-    uint64_t ticks_only;
-    double usec_only;
+    // ticks/nsec/percent used by this op alone (not including callees)
+    int64_t ticks_only;
+    double nsec_only;
     double percent_only;
 
     OpInfo()
       : count(0),
         ticks(0),
-        usec(0.0),
-        percent(0.0) {}
+        nsec(0.0),
+        percent(0.0),
+        ticks_only(0),
+        nsec_only(0.0),
+        percent_only(0.0) {}
   };
 
   // Outer map is keyed by function name,
@@ -45,7 +50,7 @@ namespace {
   typedef std::map<std::string, OpInfoMap> FuncInfoMap;
 
   std::string qualified_name(const std::string& op_type, const std::string& op_name) {
-    // Aribtrary, just join type + name
+    // Arbitrary, just join type + name
     return op_type + ":" + op_name;
   }
 
@@ -77,17 +82,33 @@ namespace {
 
   void ProcessLine(const std::string& s, FuncInfoMap& info) {
     std::vector<std::string> v = Split(s, ' ');
-    if (v.size() < 8 || v[0] != "halide_profiler") {
+    if (v.size() < 8) {
       return;
     }
-    const std::string& metric = v[1];
-    const std::string& func_name = v[2];
-    const std::string& op_type = v[3];
-    const std::string& op_name = v[4];
-    const std::string& parent_type = v[5];
-    const std::string& parent_name = v[6];
-    std::istringstream value_stream(v[7]);
-    uint64_t value;
+    // Some environments (e.g. Android logging) will emit a prefix
+    // for each line; skip the first few words we see before
+    // deciding to ignore the line.
+    int first = -1;
+    for (int i = 0; i < 4; ++i) {
+      if (v[i] == "halide_profiler") {
+        first = i;
+        break;
+      }
+    }
+    if (first < 0) {
+      return;
+    }
+    const std::string& metric = v[first + 1];
+    const std::string& func_name = v[first + 2];
+    const std::string& op_type = v[first + 3];
+    const std::string& op_name = v[first + 4];
+    const std::string& parent_type = v[first + 5];
+    const std::string& parent_name = v[first + 6];
+    if (op_type == kIgnore || op_name == kIgnore) {
+      return;
+    }
+    std::istringstream value_stream(v[first + 7]);
+    int64_t value;
     value_stream >> value;
     OpInfoMap& op_info_map = info[func_name];
     OpInfo& op_info = op_info_map[qualified_name(op_type, op_name)];
@@ -99,51 +120,76 @@ namespace {
       op_info.count = value;
     } else if (metric == "ticks") {
       op_info.ticks = value;
-    } else if (metric == "usec") {
-      op_info.usec = value;
+    } else if (metric == "nsec") {
+      op_info.nsec = value;
     }
   }
 
-  void FinishOpInfo(OpInfoMap& op_info_map) {
-    // First, fill in usec and percent.
-    std::string toplevel_qual_name = qualified_name(kToplevel, kToplevel);
+  typedef std::map<std::string, std::vector<OpInfo*> > ChildMap;
 
+  int64_t AdjustOverhead(OpInfo& op_info, ChildMap& child_map, double overhead_ticks_avg) {
+    int64_t overhead_ticks = op_info.count * overhead_ticks_avg;
+    std::string qual_name = qualified_name(op_info.op_type, op_info.op_name);
+    const std::vector<OpInfo*>& children = child_map[qual_name];
+    for (std::vector<OpInfo*>::const_iterator it = children.begin(); it != children.end(); ++it) {
+      OpInfo* c = *it;
+      int64_t child_overhead = AdjustOverhead(*c, child_map, overhead_ticks_avg);
+      overhead_ticks += child_overhead;
+      op_info.ticks -= child_overhead;
+      op_info.ticks_only -= child_overhead;
+    }
+    return overhead_ticks;
+  }
+
+  void FinishOpInfo(OpInfoMap& op_info_map, bool adjust_for_overhead) {
+
+    std::string toplevel_qual_name = qualified_name(kToplevel, kToplevel);
     OpInfo& total = op_info_map[toplevel_qual_name];
     total.count = 1;
     total.percent = 1.0;
 
-    double ticks_per_usec = (double)total.ticks / (double)total.usec;
-    for (OpInfoMap::iterator o = op_info_map.begin(); o != op_info_map.end(); ++o) {
-      const std::string& qual_name = o->first;
-      if (qual_name == toplevel_qual_name) {
-        continue;
-      }
-      OpInfo& op_info = o->second;
-      // usec isn't guaranteed to be super-precise, so this
-      // isn't perfect; still useful for estimation though.
-      op_info.usec = op_info.ticks / ticks_per_usec;
-      op_info.percent = (double)op_info.ticks / (double)total.ticks;
+    double ticks_per_nsec = (double)total.ticks / (double)total.nsec;
+
+    // Note that overhead (if present) is measured outside the rest
+    // of the "total", so it should not be included (or subtracted from)
+    // the total.
+    double overhead_ticks_avg = 0;
+    std::string overhead_qual_name = qualified_name(kOverhead, kOverhead);
+    OpInfoMap::iterator it = op_info_map.find(overhead_qual_name);
+    if (it != op_info_map.end()) {
+      OpInfo overhead = it->second;
+      overhead_ticks_avg = (double)overhead.ticks / (double)overhead.count;
+      op_info_map.erase(it);
     }
 
-    // Now, fill in the "only" fields. First a map from parent -> children...
-    std::map<std::string, std::vector<OpInfo> > children_map;
+    ChildMap child_map;
     for (OpInfoMap::iterator o = op_info_map.begin(); o != op_info_map.end(); ++o) {
       OpInfo& op_info = o->second;
       std::string parent_qual_name = qualified_name(op_info.parent_type, op_info.parent_name);
-      children_map[parent_qual_name].push_back(op_info);
+      child_map[parent_qual_name].push_back(&op_info);
     }
 
-    // ... then adjust the "only" fields.
     for (OpInfoMap::iterator o = op_info_map.begin(); o != op_info_map.end(); ++o) {
       OpInfo& op_info = o->second;
       op_info.ticks_only = op_info.ticks;
-      op_info.usec_only = op_info.usec;
-      std::string qual_name = qualified_name(op_info.op_type, op_info.op_name);
-      const std::vector<OpInfo>& children = children_map[qual_name];
-      for (std::vector<OpInfo>::const_iterator c = children.begin(); c != children.end(); ++c) {
+      const std::vector<OpInfo*>& children = child_map[o->first];
+      for (std::vector<OpInfo*>::const_iterator it = children.begin(); it != children.end(); ++it) {
+        OpInfo* c = *it;
         op_info.ticks_only -= c->ticks;
-        op_info.usec_only -= c->usec;
       }
+    }
+
+    if (adjust_for_overhead) {
+      // Adjust values to account for profiling overhead
+      AdjustOverhead(total, child_map, overhead_ticks_avg);
+    }
+
+    // Calc the derived fields
+    for (OpInfoMap::iterator o = op_info_map.begin(); o != op_info_map.end(); ++o) {
+      OpInfo& op_info = o->second;
+      op_info.nsec = op_info.ticks / ticks_per_nsec;
+      op_info.nsec_only = op_info.ticks_only / ticks_per_nsec;
+      op_info.percent = (double)op_info.ticks / (double)total.ticks;
       op_info.percent_only = (double)op_info.ticks_only / (double)total.ticks;
     }
   }
@@ -168,7 +214,7 @@ namespace {
 int main(int argc, char** argv) {
 
   if (HasOpt(argv, argv + argc, "-h")) {
-    printf("HalideProf [-f funcname] [-sort c|t|to] [-top N] < profiledata\n");
+    printf("HalideProf [-f funcname] [-sort c|t|to] [-top N] [-overhead=0|1] < profiledata\n");
     return 0;
   }
 
@@ -193,6 +239,15 @@ int main(int argc, char** argv) {
     std::istringstream(top_n_str) >> top_n;
   }
 
+  // It's rare that you wouldn't want to try to adjust the times
+  // to minimize the effect profiling overhead, but just in case,
+  // allow -overhead 0
+  int32_t adjust_for_overhead = 1;
+  std::string adjust_for_overhead_str = GetOpt(argv, argv + argc, "-overhead");
+  if (!adjust_for_overhead_str.empty()) {
+    std::istringstream(adjust_for_overhead_str) >> adjust_for_overhead;
+  }
+
   FuncInfoMap func_info_map;
   std::string line;
   while (std::getline(std::cin, line)) {
@@ -200,7 +255,7 @@ int main(int argc, char** argv) {
   }
 
   for (FuncInfoMap::iterator f = func_info_map.begin(); f != func_info_map.end(); ++f) {
-    FinishOpInfo(f->second);
+    FinishOpInfo(f->second, adjust_for_overhead != 0);
   }
 
   for (FuncInfoMap::iterator f = func_info_map.begin(); f != func_info_map.end(); ++f) {
@@ -229,10 +284,10 @@ int main(int argc, char** argv) {
         << std::setw(40) << std::left << op_info.op_name
         << std::setw(16) << std::right << op_info.count
         << std::setw(16) << op_info.ticks
-        << std::setw(12) << std::setprecision(2) << std::fixed << (op_info.usec / 1000.0)
+        << std::setw(12) << std::setprecision(2) << std::fixed << (op_info.nsec / 1000000.0)
         << std::setw(8) << std::setprecision(2) << std::fixed << (op_info.percent * 100.0)
         << std::setw(16) << op_info.ticks_only
-        << std::setw(12) << std::setprecision(2) << std::fixed << (op_info.usec_only / 1000.0)
+        << std::setw(12) << std::setprecision(2) << std::fixed << (op_info.nsec_only / 1000000.0)
         << std::setw(8) << std::setprecision(2) << std::fixed << (op_info.percent_only * 100.0)
         << "\n";
       if (--top_n <= 0) {
@@ -241,5 +296,3 @@ int main(int argc, char** argv) {
     }
   }
 }
-
-

@@ -81,14 +81,14 @@ public:
     /** Do any required target-specific things to the execution engine
      * and the module prior to jitting. Called by JITCompiledModule
      * just before it jits. Does nothing by default. */
-    virtual void jit_init(llvm::ExecutionEngine *ee, llvm::Module *module) {}
+    virtual void jit_init(llvm::ExecutionEngine *, llvm::Module *) {}
 
     /** Do any required target-specific things to the execution engine
      * and the module after jitting. Called by JITCompiledModule just
      * after it jits. Does nothing by default. The third argument
      * gives the target a chance to inject calls to target-specific
      * module cleanup routines. */
-    virtual void jit_finalize(llvm::ExecutionEngine *ee, llvm::Module *module, std::vector<void (*)()> *cleanup_routines) {}
+    virtual void jit_finalize(llvm::ExecutionEngine *, llvm::Module *, std::vector<void (*)()> *) {}
 
 protected:
 
@@ -161,6 +161,12 @@ protected:
     /** Codegen an assertion. If false, it bails out and calls the error handler. */
     void create_assertion(llvm::Value *condition, const std::string &message);
 
+    /** Put a string constant in the module as a global variable and return a pointer to it. */
+    llvm::Value *create_string_constant(const std::string &str);
+
+    /** Widen an llvm scalar into an llvm vector with the given number of lanes. */
+    llvm::Value *create_broadcast(llvm::Value *, int width);
+
     /** Given an llvm value representing a pointer to a buffer_t, extract various subfields.
      * The *_ptr variants return a pointer to the struct element, while the basic variants
      * load the actual value. */
@@ -204,6 +210,7 @@ protected:
     // @{
     virtual void visit(const IntImm *);
     virtual void visit(const FloatImm *);
+    virtual void visit(const StringImm *);
     virtual void visit(const Cast *);
     virtual void visit(const Variable *);
     virtual void visit(const Add *);
@@ -229,12 +236,13 @@ protected:
     virtual void visit(const Call *);
     virtual void visit(const Let *);
     virtual void visit(const LetStmt *);
-    virtual void visit(const PrintStmt *);
     virtual void visit(const AssertStmt *);
     virtual void visit(const Pipeline *);
     virtual void visit(const For *);
     virtual void visit(const Store *);
     virtual void visit(const Block *);
+    virtual void visit(const IfThenElse *);
+    virtual void visit(const Evaluate *);
     // @}
 
     /** Recursive code for generating a gather using a binary tree. */
@@ -272,7 +280,26 @@ protected:
      * current context. */
     llvm::Type *llvm_type_of(Type);
 
+    /** Restores the stack pointer to the given value. Call this to
+     * free a stack variable. */
+    void restore_stack(llvm::Value *saved_stack);
+
+    /** Save the stack directly. You only need to call this if you're
+     * doing your own allocas. */
+    llvm::Value *save_stack();
+
+    /** If you're doing an Alloca but can't clean it up right now, set
+     * this to high and it will get cleaned up at the close of the
+     * next For loop. */
+    bool need_stack_restore;
+
+    /** Which buffers came in from the outside world (and so we can't
+     * guarantee their alignment) */
+    std::set<std::string> might_be_misaligned;
+
+
 private:
+
     /** All the values in scope at the current code location during
      * codegen. Use sym_push and sym_pop to access. */
     Scope<llvm::Value *> symbol_table;
@@ -280,6 +307,9 @@ private:
     /** Alignment info for Int(32) variables in scope. */
     Scope<ModulusRemainder> alignment_info;
 
+    /** String constants already emitted to the module. Tracked to
+     * prevent emitting the same string many times. */
+    std::map<std::string, llvm::Value *> string_constants;
 };
 
 }}

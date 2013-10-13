@@ -11,6 +11,9 @@ namespace Internal {
 namespace {
     const char kBufName[] = "ProfilerBuffer";
     const char kToplevel[] = "$total$";
+    const char kOverhead[] = "$overhead$";
+    const char kIgnore[] = "$ignore$";
+    const char kIgnoreBuf[] = "$ignore_buf$";
 }
 
 int profiling_level() {
@@ -31,7 +34,7 @@ public:
 
     Stmt inject(Stmt s) {
         if (level >= 1) {
-            // Add calls to the usec and timer at the start and end,
+            // Add calls to the nsec and timer at the start and end,
             // so that we can get an estimate of how long a single
             // tick of the profiling_timer is (since it may be dependent
             // on e.g. processor clock rate)
@@ -40,20 +43,50 @@ public:
                 s = mutate(s);
             }
             s = add_ticks(kToplevel, kToplevel, s);
-            s = add_usec(kToplevel, kToplevel, s);
+            s = add_nsec(kToplevel, kToplevel, s);
 
             // Note that this is tacked on to the front of the block, since it must come
-            // before the calls to halide_current_time_usec.
+            // before the calls to halide_current_time_ns.
             Expr begin_clock_call = Call::make(Int(32), "halide_start_clock", std::vector<Expr>(), Call::Extern);
             Stmt begin_clock = AssertStmt::make(begin_clock_call == 0, "Failed to start clock");
             s = Block::make(begin_clock, s);
+
+            // Do a little calibration: make a loop that does a large number of calls to add_ticks
+            // and measures the total time, so we can calculate the average overhead
+            // and subtract it from the final results. (The "body" of this loop is just
+            // a store of 0 to scratch that we expect to be optimized away.) This isn't a perfect
+            // solution, but is much better than nothing.
+            //
+            // Note that we deliberately unroll a bit to minimize loop overhead, otherwise our
+            // estimate will be too high.
+            //
+            // NOTE: we deliberately do this *after* measuring
+            // the total, so this should *not* be included in "kToplevel".
+            const int kIters = 1000000;
+            const int kUnroll = 4;
+            Stmt ticker_block = Stmt();
+            for (int i = 0; i < kUnroll; i++) {
+                ticker_block = Block::make(
+                    add_ticks(kIgnore, kIgnore, Store::make(kIgnoreBuf, Cast::make(UInt(32), 0), 0)),
+                        ticker_block);
+            }
+
+            Expr j = Variable::make(Int(32), "j");
+            Stmt do_timings = For::make("j", 0, kIters, For::Serial, ticker_block);
+            do_timings = add_ticks(kOverhead, kOverhead, do_timings);
+            do_timings = add_delta("count", kOverhead, kOverhead, Cast::make(UInt(64), 0),
+                Cast::make(UInt(64), kIters * kUnroll), do_timings);
+            s = Block::make(s, do_timings);
+            s = Allocate::make(kIgnoreBuf, UInt(32), 1, s);
 
             // Tack on code to print the counters.
             for (map<string, int>::const_iterator it = indices.begin(); it != indices.end(); ++it) {
                 int idx = it->second;
                 Expr val = Load::make(UInt(64), kBufName, idx, Buffer(), Parameter());
-                Stmt print_val = PrintStmt::make(it->first, vec(val));
-                s = Block::make(s, print_val);
+                Expr print_val = Call::make(Int(32), "halide_printf",
+                                            vec<Expr>(it->first + " %llu\n", val), Call::Extern);
+                Stmt print_stmt = AssertStmt::make(print_val > 0, "halide_printf failed");
+                s = Block::make(s, print_stmt);
             }
 
             // Now that we know the final size, allocate the buffer and init to zero.
@@ -120,9 +153,9 @@ private:
         return add_delta("ticks", op_type, op_name, ticks, ticks, s);
     }
 
-    Stmt add_usec(const string& op_type, const string& op_name, Stmt s) {
-        Expr usec = Call::make(UInt(64), "halide_current_time_usec", std::vector<Expr>(), Call::Extern);
-        return add_delta("usec", op_type, op_name, usec, usec, s);
+    Stmt add_nsec(const string& op_type, const string& op_name, Stmt s) {
+        Expr nsec = Call::make(UInt(64), "halide_current_time_ns", std::vector<Expr>(), Call::Extern);
+        return add_delta("nsec", op_type, op_name, nsec, nsec, s);
     }
 
     Stmt add_delta(const string& metric_name, const string& op_type, const string& op_name,

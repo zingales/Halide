@@ -35,11 +35,6 @@ private:
             return;
         }
 
-        if (starts_with(v->name, "iv.")) {
-            // Don't capture implicit vars
-            return;
-        }
-
         if (v->reduction_domain.defined()) {
             rdom = RDom(v->reduction_domain);
             return;

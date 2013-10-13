@@ -710,7 +710,6 @@ void CodeGen_X86::test() {
 
     // Then print some stuff (disabled to prevent debugging spew)
     // vector<Expr> print_args = vec<Expr>(3, 4.5f, Cast::make(Int(8), 2), Ramp::make(alpha, 3.2f, 4));
-    // init = Block::make(init, PrintStmt::make("Test print: ", print_args));
 
     // Then run a parallel for loop that clobbers three elements of buf
     Expr e = Select::make(alpha > 4.0f, 3, 2);
@@ -744,10 +743,13 @@ void CodeGen_X86::test() {
     }
     #endif
 
+    debug(2) << "Compiling to function pointers \n";
     JITCompiledModule m = cg.compile_to_function_pointers();
 
-    typedef void (*fn_type)(::buffer_t *, float, int);
+    typedef int (*fn_type)(::buffer_t *, float, int);
     fn_type fn = reinterpret_bits<fn_type>(m.function);
+
+    debug(2) << "Function pointer lives at " << m.function << "\n";
 
     int scratch_buf[64];
     int *scratch = &scratch_buf[0];

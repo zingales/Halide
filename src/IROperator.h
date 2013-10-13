@@ -225,6 +225,7 @@ inline Expr &operator*=(Expr &a, Expr b) {
  * coercion using \ref Internal::match_types */
 inline Expr operator/(Expr a, Expr b) {
     assert(a.defined() && b.defined() && "operator/ of undefined");
+    assert(!is_const(b, 0) && "operator/ with constant 0 divisor.");
     Internal::match_types(a, b);
     return Internal::Div::make(a, b);
 }
@@ -234,6 +235,7 @@ inline Expr operator/(Expr a, Expr b) {
  * the type of the first. */
 inline Expr &operator/=(Expr &a, Expr b) {
     assert(a.defined() && b.defined() && "operator/= of undefined");
+    assert(!is_const(b, 0) && "operator/= with constant 0 divisor.");
     a = Internal::Div::make(a, cast(a.type(), b));
     return a;
 }
@@ -242,6 +244,7 @@ inline Expr &operator/=(Expr &a, Expr b) {
  * necessary type coercion using \ref Internal::match_types */
 inline Expr operator%(Expr a, Expr b) {
     assert(a.defined() && b.defined() && "operator% of undefined");
+    assert(!is_const(b, 0) && "operator% with constant 0 divisor.");
     Internal::match_types(a, b);
     return Internal::Mod::make(a, b);
 }
@@ -366,12 +369,26 @@ inline Expr abs(Expr a) {
     return 0; // prevent "control reaches end of non-void function" error
 }
 
-/** Returns an expression equivalent to the ternary operator in C. If
- * the first argument is true, then return the second, else return the
- * third. Typically vectorizes cleanly, but benefits from SSE41 or newer
- * on x86. */
-inline Expr select(Expr a, Expr b, Expr c) {
-    return Internal::Select::make(a, b, c);
+/** Returns an expression similar to the ternary operator in C, except
+ * that it always evaluates all arguments. If the first argument is
+ * true, then return the second, else return the third. Typically
+ * vectorizes cleanly, but benefits from SSE41 or newer on x86. */
+inline Expr select(Expr condition, Expr true_value, Expr false_value) {
+
+    if (as_const_int(condition)) {
+        // Why are you doing this? We'll preserve the select node until constant folding for you.
+        condition = cast(Bool(), condition);
+    }
+
+    // Coerce int literals to the type of the other argument
+    if (as_const_int(true_value)) {
+        true_value = cast(false_value.type(), true_value);
+    }
+    if (as_const_int(false_value)) {
+        false_value = cast(true_value.type(), false_value);
+    }
+
+    return Internal::Select::make(condition, true_value, false_value);
 }
 
 /** Return the sine of a floating-point expression. If the argument is

@@ -39,20 +39,15 @@ WEAK int halide_start_clock() {
     return 0;
 }
 
-// TODO(srj): gettimeofday isn't a good way to get a time for
-// profiling-ish purposes, since that can change the whim of
-// a remote time server; clock_gettime() is now recommended, but it doesn't
-// exist on OSX.
-WEAK int64_t halide_current_time_usec() {
-    timeval now = {0,0};
+// clock_gettime() is preferred over gettimeofday(), but OSX
+// doesn't provide the former. (Use linux_clock.cpp to use clock_gettime(),
+// which will provide actual nanosecond accuracy.)
+WEAK int64_t halide_current_time_ns() {
+    timeval now;
     gettimeofday(&now, NULL);
-    int64_t delta = (now.tv_sec - halide_reference_clock.tv_sec)*1000000;
-    delta += (now.tv_usec - halide_reference_clock.tv_usec);
-    return delta;
-}
-
-WEAK int halide_current_time() {
-  return int(halide_current_time_usec() / 1000);
+    int64_t d = int64_t(now.tv_sec - halide_reference_clock.tv_sec)*1000000;
+    int64_t ud = int64_t(now.tv_usec) - int64_t(halide_reference_clock.tv_usec);
+    return (d + ud) * 1000;
 }
 
 }

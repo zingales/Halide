@@ -19,11 +19,12 @@ class JITModuleHolder {
 public:
     mutable RefCount ref_count;
 
-    JITModuleHolder(llvm::ExecutionEngine *ee, llvm::Module *m, void (*shutdown)()) :
+    JITModuleHolder(llvm::ExecutionEngine *ee, llvm::Module *m, void (*stop_threads)(), void (*stop_trace)()) :
         execution_engine(ee),
         module(m),
         context(&m->getContext()),
-        shutdown_thread_pool(shutdown) {
+        shutdown_thread_pool(stop_threads),
+        shutdown_trace(stop_trace) {
     }
 
     ~JITModuleHolder() {
@@ -34,6 +35,7 @@ public:
         }
 
         shutdown_thread_pool();
+        shutdown_trace();
         delete execution_engine;
         delete context;
         // No need to delete the module - deleting the execution engine should take care of that.
@@ -43,6 +45,7 @@ public:
     Module *module;
     LLVMContext *context;
     void (*shutdown_thread_pool)();
+    void (*shutdown_trace)();
 
     /** Do any target-specific module cleanup. */
     std::vector<void (*)()> cleanup_routines;
@@ -55,6 +58,12 @@ template<>
 EXPORT void destroy<JITModuleHolder>(const JITModuleHolder *f) {delete f;}
 
 namespace {
+
+#ifdef __arm__
+// On ARM we need to track the addresses of all the functions we
+// retrieve so that we can flush the icache.
+char *start, *end;
+#endif
 
 // Retrieve a function pointer from an llvm module, possibly by
 // compiling it. Returns it by assigning to the last argument.
@@ -82,12 +91,22 @@ void hook_up_function_pointer(ExecutionEngine *ee, Module *mod, const string &na
         assert(false);
     }
 
+    debug(2) << "Function " << name << " is at " << f << "\n";
+
     *result = reinterpret_bits<FP>(f);
 
+    #ifdef __arm__
+    if (start == NULL) {
+        start = (char *)f;
+        end = (char *)f;
+    } else {
+        start = std::min(start, (char *)f);
+        end = std::max(end, (char *)f+32);
+    }
+    #endif
 }
 
 }
-
 
 void JITCompiledModule::compile_module(CodeGen *cg, llvm::Module *m, const string &function_name) {
 
@@ -121,7 +140,8 @@ void JITCompiledModule::compile_module(CodeGen *cg, llvm::Module *m, const strin
     engine_builder.setEngineKind(EngineKind::JIT);
     #ifdef USE_MCJIT
     engine_builder.setUseMCJIT(true);
-    engine_builder.setJITMemoryManager(JITMemoryManager::CreateDefaultMemManager());
+    JITMemoryManager *memory_manager = JITMemoryManager::CreateDefaultMemManager();
+    engine_builder.setJITMemoryManager(memory_manager);
     #else
     engine_builder.setUseMCJIT(false);
     #endif
@@ -131,8 +151,10 @@ void JITCompiledModule::compile_module(CodeGen *cg, llvm::Module *m, const strin
     ExecutionEngine *ee = engine_builder.create();
     if (!ee) std::cerr << error_string << "\n";
     assert(ee && "Couldn't create execution engine");
-    // TODO: I don't think this is necessary, we shouldn't have any static constructors
-    // ee->runStaticConstructorsDestructors(...);
+
+    #ifdef __arm__
+    start = end = NULL;
+    #endif
 
     // Do any target-specific initialization
     cg->jit_init(ee, m);
@@ -154,15 +176,36 @@ void JITCompiledModule::compile_module(CodeGen *cg, llvm::Module *m, const strin
     hook_up_function_pointer(ee, m, "halide_set_custom_allocator", true, &set_custom_allocator);
     hook_up_function_pointer(ee, m, "halide_set_custom_do_par_for", true, &set_custom_do_par_for);
     hook_up_function_pointer(ee, m, "halide_set_custom_do_task", true, &set_custom_do_task);
+    hook_up_function_pointer(ee, m, "halide_set_custom_trace", true, &set_custom_trace);
     hook_up_function_pointer(ee, m, "halide_shutdown_thread_pool", true, &shutdown_thread_pool);
+    hook_up_function_pointer(ee, m, "halide_shutdown_trace", true, &shutdown_trace);
 
+    debug(2) << "Finalizing object\n";
     ee->finalizeObject();
 
     // Stash the various objects that need to stay alive behind a reference-counted pointer.
-    module = new JITModuleHolder(ee, m, shutdown_thread_pool);
+    module = new JITModuleHolder(ee, m, shutdown_thread_pool, shutdown_trace);
 
     // Do any target-specific post-compilation module meddling
     cg->jit_finalize(ee, m, &module.ptr->cleanup_routines);
+
+    #ifdef __arm__
+    // Flush each function from the dcache so that it gets pulled into
+    // the icache correctly.
+
+    // finalizeMemory should have done the trick, but as of Aug 28
+    // 2013, it doesn't work unless we also manually flush the
+    // cache. Otherwise the icache's view of the code is missing the
+    // relocations, which gets really confusing to debug, because
+    // gdb's view of the code uses the dcache, so the disassembly
+    // isn't right.
+    debug(2) << "Flushing cache from " << (void *)start
+             << " to " << (void *)end << "\n";
+    __clear_cache(start, end);
+    #endif
+
+    // TODO: I don't think this is necessary, we shouldn't have any static constructors
+    // ee->runStaticConstructorsDestructors(false);
 
 }
 

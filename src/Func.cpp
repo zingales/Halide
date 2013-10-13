@@ -11,6 +11,7 @@
 #include "Image.h"
 #include "Param.h"
 #include "Debug.h"
+#include <algorithm>
 #include <iostream>
 #include <string.h>
 #include <fstream>
@@ -32,7 +33,8 @@ Func::Func(const string &name) : func(unique_name(name)),
                                  custom_malloc(NULL),
                                  custom_free(NULL),
                                  custom_do_par_for(NULL),
-                                 custom_do_task(NULL) {
+                                 custom_do_task(NULL),
+                                 custom_trace(NULL) {
 }
 
 Func::Func() : func(unique_name('f')),
@@ -40,7 +42,8 @@ Func::Func() : func(unique_name('f')),
                custom_malloc(NULL),
                custom_free(NULL),
                custom_do_par_for(NULL),
-               custom_do_task(NULL) {
+               custom_do_task(NULL),
+               custom_trace(NULL) {
 }
 
 Func::Func(Expr e) : func(unique_name('f')),
@@ -48,8 +51,9 @@ Func::Func(Expr e) : func(unique_name('f')),
                      custom_malloc(NULL),
                      custom_free(NULL),
                      custom_do_par_for(NULL),
-                     custom_do_task(NULL) {
-    (*this)() = e;
+                     custom_do_task(NULL),
+                     custom_trace(NULL) {
+    (*this)(_) = e;
 }
 
 /*
@@ -63,7 +67,7 @@ Func::Func(Buffer b) : func(unique_name('f')),
     for (int i = 0; i < b.dimensions(); i++) {
         args.push_back(Var::implicit(i));
     }
-    (*this)() = Internal::Call::make(b, args);
+    (*this)(_) = Internal::Call::make(b, args);
 }
 */
 
@@ -87,7 +91,7 @@ std::vector<Var> Func::args() const {
 Expr Func::value() const {
     assert(defined() &&
            "Can't call Func::value() on an undefined Func. To check if a Func is defined, call Func::defined()");
-    assert(func.values().size() == 1 && "Can't call Func::value() on a func with multiple values");
+    assert(func.outputs() == 1 && "Can't call Func::value() on a func with multiple values");
     return func.values()[0];
 }
 
@@ -128,7 +132,7 @@ RDom Func::reduction_domain() const {
 }
 
 bool Func::defined() const {
-    return func.has_pure_definition();
+    return func.has_pure_definition() || func.has_extern_definition();
 }
 
 /** Is this function a reduction? */
@@ -136,117 +140,209 @@ bool Func::is_reduction() const {
     return func.has_reduction_definition();
 }
 
+/** Is this function external? */
+EXPORT bool Func::is_extern() const {
+    return func.has_extern_definition();
+}
+
+/** Add an extern definition for this Func. */
+EXPORT void Func::define_extern(const std::string &function_name,
+                                const std::vector<ExternFuncArgument> &args,
+                                const std::vector<Type> &types,
+                                int dimensionality) {
+    func.define_extern(function_name, args, types, dimensionality);
+}
+
+/** Get the types of the buffers returned by an extern definition. */
+EXPORT const std::vector<Type> &Func::output_types() const {
+    return func.output_types();
+}
+
+/** Get the number of outputs this function has. */
+EXPORT int Func::outputs() const {
+    return func.outputs();
+}
+
+/** Get the name of the extern function called for an extern
+ * definition. */
+EXPORT const std::string &Func::extern_function_name() const {
+    return func.extern_function_name();
+}
+
 int Func::dimensions() const {
     if (!defined()) return 0;
-    return (int)func.args().size();
+    return func.dimensions();
 }
 
 FuncRefVar Func::operator()() const {
     // Bulk up the argument list using implicit vars
     vector<Var> args;
-    add_implicit_vars(args);
-    return FuncRefVar(func, args);
+    int placeholder_pos = add_implicit_vars(args);
+    return FuncRefVar(func, args, placeholder_pos);
 }
 
 FuncRefVar Func::operator()(Var x) const {
     // Bulk up the argument list using implicit vars
     vector<Var> args = vec(x);
-    add_implicit_vars(args);
-    return FuncRefVar(func, args);
+    int placeholder_pos = add_implicit_vars(args);
+    return FuncRefVar(func, args, placeholder_pos);
 }
 
 FuncRefVar Func::operator()(Var x, Var y) const {
     vector<Var> args = vec(x, y);
-    add_implicit_vars(args);
-    return FuncRefVar(func, args);
+    int placeholder_pos = add_implicit_vars(args);
+    return FuncRefVar(func, args, placeholder_pos);
 }
 
 FuncRefVar Func::operator()(Var x, Var y, Var z) const{
     vector<Var> args = vec(x, y, z);
-    add_implicit_vars(args);
-    return FuncRefVar(func, args);
+    int placeholder_pos = add_implicit_vars(args);
+    return FuncRefVar(func, args, placeholder_pos);
 }
 
 FuncRefVar Func::operator()(Var x, Var y, Var z, Var w) const {
     vector<Var> args = vec(x, y, z, w);
-    add_implicit_vars(args);
-    return FuncRefVar(func, args);
+    int placeholder_pos = add_implicit_vars(args);
+    return FuncRefVar(func, args, placeholder_pos);
 }
 
 FuncRefVar Func::operator()(Var x, Var y, Var z, Var w, Var u) const {
     vector<Var> args = vec(x, y, z, w, u);
-    add_implicit_vars(args);
-    return FuncRefVar(func, args);
+    int placeholder_pos = add_implicit_vars(args);
+    return FuncRefVar(func, args, placeholder_pos);
 }
 
 FuncRefVar Func::operator()(Var x, Var y, Var z, Var w, Var u, Var v) const {
-  vector<Var> args = vec(x, y, z, w, u, v);
-    add_implicit_vars(args);
-    return FuncRefVar(func, args);
+    vector<Var> args = vec(x, y, z, w, u, v);
+    int placeholder_pos = add_implicit_vars(args);
+    return FuncRefVar(func, args, placeholder_pos);
 }
 
 FuncRefVar Func::operator()(vector<Var> args) const {
-    add_implicit_vars(args);
-    return FuncRefVar(func, args);
+    int placeholder_pos = add_implicit_vars(args);
+    return FuncRefVar(func, args, placeholder_pos);
 }
 
 FuncRefExpr Func::operator()(Expr x) const {
     vector<Expr> args = vec(x);
-    add_implicit_vars(args);
-    return FuncRefExpr(func, args);
+    int placeholder_pos = add_implicit_vars(args);
+    return FuncRefExpr(func, args, placeholder_pos);
 }
 
 FuncRefExpr Func::operator()(Expr x, Expr y) const {
     vector<Expr> args = vec(x, y);
-    add_implicit_vars(args);
-    return FuncRefExpr(func, args);
+    int placeholder_pos = add_implicit_vars(args);
+    return FuncRefExpr(func, args, placeholder_pos);
 }
 
 FuncRefExpr Func::operator()(Expr x, Expr y, Expr z) const {
     vector<Expr> args = vec(x, y, z);
-    add_implicit_vars(args);
-    return FuncRefExpr(func, args);
+    int placeholder_pos = add_implicit_vars(args);
+    return FuncRefExpr(func, args, placeholder_pos);
 }
 
 FuncRefExpr Func::operator()(Expr x, Expr y, Expr z, Expr w) const {
     vector<Expr> args = vec(x, y, z, w);
-    add_implicit_vars(args);
-    return FuncRefExpr(func, args);
+    int placeholder_pos = add_implicit_vars(args);
+    return FuncRefExpr(func, args, placeholder_pos);
 }
 
 FuncRefExpr Func::operator()(Expr x, Expr y, Expr z, Expr w, Expr u) const {
     vector<Expr> args = vec(x, y, z, w, u);
-    add_implicit_vars(args);
-    return FuncRefExpr(func, args);
+    int placeholder_pos = add_implicit_vars(args);
+    return FuncRefExpr(func, args, placeholder_pos);
 }
 
 FuncRefExpr Func::operator()(Expr x, Expr y, Expr z, Expr w, Expr u, Expr v) const {
     vector<Expr> args = vec(x, y, z, w, u, v);
-    add_implicit_vars(args);
-    return FuncRefExpr(func, args);
+    int placeholder_pos = add_implicit_vars(args);
+    return FuncRefExpr(func, args, placeholder_pos);
 }
 
 FuncRefExpr Func::operator()(vector<Expr> args) const {
-    add_implicit_vars(args);
-    return FuncRefExpr(func, args);
+    int placeholder_pos = add_implicit_vars(args);
+    return FuncRefExpr(func, args, placeholder_pos);
 }
 
-void Func::add_implicit_vars(vector<Var> &args) const {
-    int i = 0;
-    while ((int)args.size() < dimensions()) {
-        Internal::debug(2) << "Adding implicit var " << i << " to call to " << name() << "\n";
-        args.push_back(Var::implicit(i++));
+int Func::add_implicit_vars(vector<Var> &args) const {
+    int placeholder_pos = -1;
+    std::vector<Var>::iterator iter = args.begin();
+    while (iter != args.end() && !iter->same_as(_))
+        iter++;
+    if (iter != args.end()) {
+        placeholder_pos = iter - args.begin();
+        int i = 0;
+        iter = args.erase(iter);
+        while ((int)args.size() < dimensions()) {
+            Internal::debug(2) << "Adding implicit var " << i << " to call to " << name() << "\n";
+            iter = args.insert(iter, Var::implicit(i++));
+            iter++;
+        }
     }
-}
+#if HALIDE_WARNINGS_FOR_OLD_IMPLICITS
+    else {
+        // The placeholder_pos is used in lhs context. This line fakes an _ at the end of
+        // the provided arguments.
+        placeholder_pos = args.size();
+        if ((int)args.size() < dimensions()) {
+            std::cout << "Implicit arguments without placeholders are deprecated. Adding " <<
+              dimensions() - args.size() << " arguments to Func " << name() << std::endl;
 
-void Func::add_implicit_vars(vector<Expr> &args) const {
-    int i = 0;
-    while ((int)args.size() < dimensions()) {
-        Internal::debug(2) << "Adding implicit var " << i << " to call to " << name() << "\n";
-        args.push_back(Var::implicit(i++));
+            int i = 0;
+            placeholder_pos = args.size();
+            while ((int)args.size() < dimensions()) {
+                Internal::debug(2) << "Adding implicit var " << i << " to call to " << name() << "\n";
+                args.push_back(Var::implicit(i++));
+
+            }
+        }
     }
+#endif
+
+    return placeholder_pos;
 }
 
+int Func::add_implicit_vars(vector<Expr> &args) const {
+    int placeholder_pos = -1;
+    std::vector<Expr>::iterator iter = args.begin();
+    while (iter != args.end()) {
+        const Variable *var = iter->as<Variable>();
+        if (var != NULL && Var::is_implicit(var->name))
+            break;
+        iter++;
+    }
+    if (iter != args.end()) {
+        placeholder_pos = iter - args.begin();
+        int i = 0;
+        iter = args.erase(iter);
+        while ((int)args.size() < dimensions()) {
+            Internal::debug(2) << "Adding implicit var " << i << " to call to " << name() << "\n";
+            iter = args.insert(iter, Var::implicit(i++));
+            iter++;
+        }
+    }
+#if HALIDE_WARNINGS_FOR_OLD_IMPLICITS
+    else {
+        // The placeholder_pos is used in lhs context. This line fakes an _ at the end of
+        // the provided arguments.
+        placeholder_pos = args.size();
+        if ((int)args.size() < dimensions()) {
+            std::cout << "Implicit arguments without placeholders are deprecated. Adding " <<
+              dimensions() - args.size() << " arguments to Func " << name() << std::endl;
+
+            int i = 0;
+            placeholder_pos = args.size();
+            while ((int)args.size() < dimensions()) {
+                Internal::debug(2) << "Adding implicit var " << i << " to call to " << name() << "\n";
+                args.push_back(Var::implicit(i++));
+
+            }
+        }
+    }
+#endif
+
+    return placeholder_pos;
+}
 
 namespace {
 bool var_name_match(string candidate, string var) {
@@ -314,9 +410,58 @@ ScheduleHandle &ScheduleHandle::split(Var old, Var outer, Var inner, Expr factor
         assert(false);
     }
 
-
     // Add the split to the splits list
-    Schedule::Split split = {old_name, outer_name, inner_name, factor, false};
+    Schedule::Split split = {old_name, outer_name, inner_name, factor, Schedule::Split::SplitVar};
+    schedule.splits.push_back(split);
+    return *this;
+}
+
+
+ScheduleHandle &ScheduleHandle::fuse(Var inner, Var outer, Var fused) {
+    // Replace the old dimensions with the new dimension in the dims list
+    bool found_outer = false, found_inner = false;
+    string inner_name, outer_name, fused_name;
+    vector<Schedule::Dim> &dims = schedule.dims;
+
+    for (size_t i = 0; (!found_outer) && i < dims.size(); i++) {
+        if (var_name_match(dims[i].var, outer.name())) {
+            found_outer = true;
+            outer_name = dims[i].var;
+            // Remove it
+            for (size_t j = i; j < dims.size()-1; j++) {
+                dims[j] = dims[j+1];
+            }
+            dims.pop_back();
+        }
+    }
+    if (!found_outer) {
+        std::cerr << "Could not find outer fuse dimension in argument list: "
+                  << outer.name()
+                  << "\n";
+        dump_argument_list();
+        assert(false);
+    }
+
+    for (size_t i = 0; (!found_inner) && i < dims.size(); i++) {
+        if (var_name_match(dims[i].var, inner.name())) {
+            found_inner = true;
+            inner_name = dims[i].var;
+            fused_name = inner_name + "." + fused.name();
+            dims[i].var = fused_name;
+        }
+    }
+
+    if (!found_inner) {
+        std::cerr << "Could not find inner fuse dimension in argument list: "
+                  << inner.name()
+                  << "\n";
+        dump_argument_list();
+        assert(false);
+    }
+
+
+    // Add the fuse to the splits list
+    Schedule::Split split = {fused_name, outer_name, inner_name, Expr(), Schedule::Split::FuseVars};
     schedule.splits.push_back(split);
     return *this;
 }
@@ -324,13 +469,18 @@ ScheduleHandle &ScheduleHandle::split(Var old, Var outer, Var inner, Expr factor
 ScheduleHandle &ScheduleHandle::rename(Var old_var, Var new_var) {
     // Replace the old dimension with the new dimensions in the dims list
     bool found = false;
+    string old_name;
     vector<Schedule::Dim> &dims = schedule.dims;
     for (size_t i = 0; (!found) && i < dims.size(); i++) {
         if (var_name_match(dims[i].var, old_var.name())) {
+            debug(0) << dims[i].var << " matches " << old_var.name() << "\n";
             found = true;
+            old_name = dims[i].var;
             dims[i].var += "." + new_var.name();
         }
     }
+
+    string new_name = old_name + "." + new_var.name();
 
     if (!found) {
         std::cerr << "Could not find rename dimension in argument list: "
@@ -340,9 +490,31 @@ ScheduleHandle &ScheduleHandle::rename(Var old_var, Var new_var) {
         assert(false);
     }
 
-    // Add the rename to the splits list
-    Schedule::Split split = {old_var.name(), old_var.name() + "." + new_var.name(), "", 1, true};
-    schedule.splits.push_back(split);
+    if (old_name.find('.') == string::npos) {
+        // If it's a primitive name, add the rename to the splits list.
+        Schedule::Split split = {old_name, new_name, "", 1, Schedule::Split::RenameVar};
+        schedule.splits.push_back(split);
+    } else {
+        // It's a derived name, so just rewrite the split or rename that defines it.
+        bool found = false;
+        for (size_t i = schedule.splits.size(); i > 0; i--) {
+            if (schedule.splits[i-1].inner == old_name) {
+                schedule.splits[i-1].inner = new_name;
+                found = true;
+                break;
+            }
+            if (schedule.splits[i-1].outer == old_name) {
+                schedule.splits[i-1].outer = new_name;
+                found = true;
+                break;
+            }
+            if (schedule.splits[i-1].old_var == old_name) {
+                assert(false && "Can't rename a variable that has already been renamed or split!");
+            }
+        }
+        assert(found && "Rename failed: Old name is not an arg, and was not defined by a split.");
+    }
+
     return *this;
 }
 
@@ -395,6 +567,19 @@ ScheduleHandle &ScheduleHandle::tile(Var x, Var y, Var xi, Var yi, Expr xfactor,
     return *this;
 }
 
+ScheduleHandle &ScheduleHandle::reorder(const std::vector<Var>& vars) {
+    if (vars.size() <= 1) {
+        return *this;
+    }
+    if (vars.size() == 2) {
+        return reorder(vars[0], vars[1]);
+    }
+    for(size_t i = 1; i < vars.size(); ++i) {
+        reorder(vars[0], vars[i]);
+    }
+    return reorder(std::vector<Var>(vars.begin() + 1, vars.end()));
+}
+
 ScheduleHandle &ScheduleHandle::reorder(Var x, Var y) {
     vector<Schedule::Dim> &dims = schedule.dims;
     bool found_y = false;
@@ -412,17 +597,44 @@ ScheduleHandle &ScheduleHandle::reorder(Var x, Var y) {
     return *this;
 }
 
-
 ScheduleHandle &ScheduleHandle::reorder(Var x, Var y, Var z) {
-    return reorder(x, y).reorder(x, z).reorder(y, z);
+    Var vars[]  = {x, y, z};
+    return reorder(std::vector<Var>(vars, vars + (sizeof(vars) / sizeof(Var))));
 }
 
 ScheduleHandle &ScheduleHandle::reorder(Var x, Var y, Var z, Var w) {
-    return reorder(x, y).reorder(x, z).reorder(x, w).reorder(y, z, w);
+    Var vars[]  = {x, y, z, w};
+    return reorder(std::vector<Var>(vars, vars + (sizeof(vars) / sizeof(Var))));
 }
 
 ScheduleHandle &ScheduleHandle::reorder(Var x, Var y, Var z, Var w, Var t) {
-    return reorder(x, y).reorder(x, z).reorder(x, w).reorder(x, t).reorder(y, z, w, t);
+    Var vars[]  = {x, y, z, w, t};
+    return reorder(std::vector<Var>(vars, vars + (sizeof(vars) / sizeof(Var))));
+}
+
+ScheduleHandle &ScheduleHandle::reorder(Var x, Var y, Var z, Var w, Var t1, Var t2) {
+    Var vars[]  = {x, y, z, w, t1, t2};
+    return reorder(std::vector<Var>(vars, vars + (sizeof(vars) / sizeof(Var))));
+}
+
+ScheduleHandle &ScheduleHandle::reorder(Var x, Var y, Var z, Var w, Var t1, Var t2, Var t3) {
+    Var vars[]  = {x, y, z, w, t1, t2, t3};
+    return reorder(std::vector<Var>(vars, vars + (sizeof(vars) / sizeof(Var))));
+}
+
+ScheduleHandle &ScheduleHandle::reorder(Var x, Var y, Var z, Var w, Var t1, Var t2, Var t3, Var t4) {
+    Var vars[]  = {x, y, z, w, t1, t2, t3, t4};
+    return reorder(std::vector<Var>(vars, vars + (sizeof(vars) / sizeof(Var))));
+}
+
+ScheduleHandle &ScheduleHandle::reorder(Var x, Var y, Var z, Var w, Var t1, Var t2, Var t3, Var t4, Var t5) {
+    Var vars[]  = {x, y, z, w, t1, t2, t3, t4, t5};
+    return reorder(std::vector<Var>(vars, vars + (sizeof(vars) / sizeof(Var))));
+}
+
+ScheduleHandle &ScheduleHandle::reorder(Var x, Var y, Var z, Var w, Var t1, Var t2, Var t3, Var t4, Var t5, Var t6) {
+    Var vars[] = {x, y, z, w, t1, t2, t3, t4, t5, t6};
+    return reorder(std::vector<Var>(vars, vars + (sizeof(vars) / sizeof(Var))));
 }
 
 ScheduleHandle &ScheduleHandle::cuda_threads(Var tx) {
@@ -536,6 +748,11 @@ Func &Func::split(Var old, Var outer, Var inner, Expr factor) {
     return *this;
 }
 
+Func &Func::fuse(Var inner, Var outer, Var fused) {
+    ScheduleHandle(func.schedule()).fuse(inner, outer, fused);
+    return *this;
+}
+
 Func &Func::rename(Var old_name, Var new_name) {
     ScheduleHandle(func.schedule()).rename(old_name, new_name);
     return *this;
@@ -581,6 +798,11 @@ Func &Func::tile(Var x, Var y, Var xi, Var yi, Expr xfactor, Expr yfactor) {
     return *this;
 }
 
+Func &Func::reorder(const std::vector<Var> &vars) {
+    ScheduleHandle(func.schedule()).reorder(vars);
+    return *this;
+}
+
 Func &Func::reorder(Var x, Var y) {
     ScheduleHandle(func.schedule()).reorder(x, y);
     return *this;
@@ -598,6 +820,31 @@ Func &Func::reorder(Var x, Var y, Var z, Var w) {
 
 Func &Func::reorder(Var x, Var y, Var z, Var w, Var t) {
     ScheduleHandle(func.schedule()).reorder(x, y, z, w, t);
+    return *this;
+}
+
+Func &Func::reorder(Var x, Var y, Var z, Var w, Var t1, Var t2) {
+    ScheduleHandle(func.schedule()).reorder(x, y, z, w, t1, t2);
+    return *this;
+}
+
+Func &Func::reorder(Var x, Var y, Var z, Var w, Var t1, Var t2, Var t3) {
+    ScheduleHandle(func.schedule()).reorder(x, y, z, w, t1, t2, t3);
+    return *this;
+}
+
+Func &Func::reorder(Var x, Var y, Var z, Var w, Var t1, Var t2, Var t3, Var t4) {
+    ScheduleHandle(func.schedule()).reorder(x, y, z, w, t1, t2, t3, t4);
+    return *this;
+}
+
+Func &Func::reorder(Var x, Var y, Var z, Var w, Var t1, Var t2, Var t3, Var t4, Var t5) {
+    ScheduleHandle(func.schedule()).reorder(x, y, z, w, t1, t2, t3, t4, t5);
+    return *this;
+}
+
+Func &Func::reorder(Var x, Var y, Var z, Var w, Var t1, Var t2, Var t3, Var t4, Var t5, Var t6) {
+    ScheduleHandle(func.schedule()).reorder(x, y, z, w, t1, t2, t3, t4, t5, t6);
     return *this;
 }
 
@@ -717,7 +964,9 @@ Func &Func::compute_at(Func f, Var var) {
 
 Func &Func::compute_root() {
     func.schedule().compute_level = Schedule::LoopLevel::root();
-    func.schedule().store_level = Schedule::LoopLevel::root();
+    if (func.schedule().store_level.is_inline()) {
+        func.schedule().store_level = Schedule::LoopLevel::root();
+    }
     return *this;
 }
 
@@ -741,6 +990,21 @@ Func &Func::compute_inline() {
     return *this;
 }
 
+Func &Func::trace_loads() {
+    func.trace_loads();
+    return *this;
+}
+
+Func &Func::trace_stores() {
+    func.trace_stores();
+    return *this;
+}
+
+Func &Func::trace_realizations() {
+    func.trace_realizations();
+    return *this;
+}
+
 void Func::debug_to_file(const string &filename) {
     func.debug_file() = filename;
 }
@@ -749,7 +1013,8 @@ ScheduleHandle Func::update() {
     return ScheduleHandle(func.reduction_schedule());
 }
 
-FuncRefVar::FuncRefVar(Internal::Function f, const vector<Var> &a) : func(f) {
+FuncRefVar::FuncRefVar(Internal::Function f, const vector<Var> &a, int placeholder_pos) : func(f) {
+    implicit_placeholder_pos = placeholder_pos;
     args.resize(a.size());
     for (size_t i = 0; i < a.size(); i++) {
         args[i] = a[i].name();
@@ -770,20 +1035,31 @@ public:
     using IRGraphVisitor::visit;
 
     void visit(const Variable *v) {
-        if (v->name.size() > 3 && v->name.substr(0, 3) == "iv.") {
-            int n = atoi(v->name.c_str()+3);
-            if (n >= count) count = n+1;
-        }
+      int index = Var::implicit_index(v->name);
+      if (index != -1) {
+            if (index >= count) count = index + 1;
+      }
     }
 };
 }
 
-void FuncRefVar::add_implicit_vars(vector<string> &a, const vector<Expr> &e) const {
-    CountImplicitVars count(e);
-    Internal::debug(2) << "Adding " << count.count << " implicit vars to LHS of " << func.name() << "\n";
-    for (int i = 0; i < count.count; i++) {
-        a.push_back(Var::implicit(i).name());
+vector<string> FuncRefVar::args_with_implicit_vars(const vector<Expr> &e) const {
+    vector<string> a = args;
+
+    if (implicit_placeholder_pos != -1) {
+        CountImplicitVars count(e);
+
+        Internal::debug(2) << "Adding " << count.count << " implicit vars to LHS of " <<
+          func.name() << " at position " << implicit_placeholder_pos << "\n";
+
+        vector<std::string>::iterator iter = a.begin() + implicit_placeholder_pos;
+        for (int i = 0; i < count.count; i++) {
+            iter = a.insert(iter, Var::implicit(i).name());
+            iter++;
+        }
     }
+
+    return a;
 }
 
 void FuncRefVar::operator=(Expr e) {
@@ -798,8 +1074,7 @@ void FuncRefVar::operator=(const Tuple &e) {
     }
 
     // Find implicit args in the expr and add them to the args list before calling define
-    vector<string> a = args;
-    add_implicit_vars(a, e.as_vector());
+    vector<string> a = args_with_implicit_vars(e.as_vector());
     func.define(a, e.as_vector());
 }
 
@@ -840,21 +1115,21 @@ void FuncRefVar::operator/=(Expr e) {
 }
 
 FuncRefVar::operator Expr() const {
-    assert(func.has_pure_definition() && "Can't call undefined function");
+    assert((func.has_pure_definition() || func.has_extern_definition()) && "Can't call undefined function");
     vector<Expr> expr_args(args.size());
     for (size_t i = 0; i < expr_args.size(); i++) {
         expr_args[i] = Var(args[i]);
     }
-    assert(func.values().size() == 1 &&
+    assert(func.outputs() == 1 &&
            "Can't convert a reference to a function that has multiple outputs to an Expr");
     return Call::make(func, expr_args);
 }
 
 Expr FuncRefVar::operator[](int i) const {
-    assert(func.has_pure_definition() && "Can't call undefined function");
-    assert(func.values().size() != 1 &&
+    assert((func.has_pure_definition() || func.has_extern_definition()) && "Can't call undefined function");
+    assert(func.outputs() != 1 &&
            "Can't index into a reference to a function that only provides one output");
-    assert(i >= 0 && i < (int)func.values().size() && "index out of range");
+    assert(i >= 0 && i < func.outputs() && "index out of range");
     vector<Expr> expr_args(args.size());
     for (size_t j = 0; j < expr_args.size(); j++) {
         expr_args[j] = Var(args[j]);
@@ -863,19 +1138,19 @@ Expr FuncRefVar::operator[](int i) const {
 }
 
 size_t FuncRefVar::size() const {
-    return func.values().size();
+    return func.outputs();
 }
 
 /*
 FuncRefVar::operator Tuple() const {
     assert(func.has_pure_definition() && "Can't call undefined function");
-    assert(func.values().size() != 1 &&
+    assert(func.outputs() != 1 &&
            "Can't create a tuple from a call to a function that only provides one output");
     vector<Expr> expr_args(args.size());
     for (size_t j = 0; j < expr_args.size(); j++) {
         expr_args[j] = Var(args[j]);
     }
-    Tuple tuple(std::vector<Expr>(func.values().size()));
+    Tuple tuple(std::vector<Expr>(func.outputs()));
     for (size_t i = 0; i < tuple.size(); i++) {
         tuple[i] = Call::make(func, expr_args, i);
     }
@@ -883,31 +1158,45 @@ FuncRefVar::operator Tuple() const {
 }
 */
 
-FuncRefExpr::FuncRefExpr(Internal::Function f, const vector<Expr> &a) : func(f), args(a) {
+FuncRefExpr::FuncRefExpr(Internal::Function f, const vector<Expr> &a, int placeholder_pos) : func(f), args(a) {
+    implicit_placeholder_pos = placeholder_pos;
     ImageParam::check_arg_types(f.name(), &args);
 }
 
-FuncRefExpr::FuncRefExpr(Internal::Function f, const vector<string> &a) : func(f) {
+FuncRefExpr::FuncRefExpr(Internal::Function f, const vector<string> &a,
+                         int placeholder_pos) : func(f) {
+    implicit_placeholder_pos = placeholder_pos;
     args.resize(a.size());
     for (size_t i = 0; i < a.size(); i++) {
         args[i] = Var(a[i]);
     }
 }
 
-void FuncRefExpr::add_implicit_vars(vector<Expr> &a, const vector<Expr> &e) const {
-    CountImplicitVars f(e);
-    // Implicit vars are also allowed in the lhs of a reduction. E.g.:
-    // f(x, y) = x+y
-    // g(x, y) = 0
-    // g(f(r.x)) = 1   (this means g(f(r.x, i0), i0) = 1)
+vector<Expr> FuncRefExpr::args_with_implicit_vars(const vector<Expr> &e) const {
+    vector<Expr> a = args;
 
-    for (size_t i = 0; i < args.size(); i++) {
-        args[i].accept(&f);
+    if (implicit_placeholder_pos != -1) {
+        CountImplicitVars f(e);
+        // TODO: Check if there is a test case for this and add one if not.
+        // Implicit vars are also allowed in the lhs of a reduction. E.g.:
+        // f(x, y) = x+y
+        // g(x, y) = 0
+        // g(f(r.x)) = 1   (this means g(f(r.x, i0), i0) = 1)
+
+        for (size_t i = 0; i < a.size(); i++) {
+            a[i].accept(&f);
+        }
+
+        Internal::debug(2) << "Adding " << f.count << " implicit vars to LHS of " << func.name() << "\n";
+
+        vector<Expr>::iterator iter = a.begin() + implicit_placeholder_pos;
+        for (int i = 0; i < f.count; i++) {
+            iter = a.insert(iter, Var::implicit(i));
+            iter++;
+        }
     }
-    Internal::debug(2) << "Adding " << f.count << " implicit vars to LHS of " << func.name() << "\n";
-    for (int i = 0; i < f.count; i++) {
-        a.push_back(Var::implicit(i));
-    }
+
+    return a;
 }
 
 void FuncRefExpr::operator=(Expr e) {
@@ -918,9 +1207,7 @@ void FuncRefExpr::operator=(const Tuple &e) {
     assert(func.has_pure_definition() &&
            "Can't add a reduction definition to an undefined function");
 
-    vector<Expr> a = args;
-    add_implicit_vars(a, e.as_vector());
-
+    vector<Expr> a = args_with_implicit_vars(e.as_vector());
     func.define_reduction(args, e.as_vector());
 }
 
@@ -959,58 +1246,58 @@ void define_base_case(Internal::Function func, const vector<Expr> &a, Expr e) {
 }
 
 void FuncRefExpr::operator+=(Expr e) {
-    vector<Expr> a = args;
-    add_implicit_vars(a, vec(e));
+    vector<Expr> a = args_with_implicit_vars(vec(e));
     define_base_case(func, a, cast(e.type(), 0));
     (*this) = Expr(*this) + e;
 }
 
 void FuncRefExpr::operator*=(Expr e) {
-    vector<Expr> a = args;
-    add_implicit_vars(a, vec(e));
+    vector<Expr> a = args_with_implicit_vars(vec(e));
     define_base_case(func, a, cast(e.type(), 1));
     (*this) = Expr(*this) * e;
 }
 
 void FuncRefExpr::operator-=(Expr e) {
-    vector<Expr> a = args;
-    add_implicit_vars(a, vec(e));
+    vector<Expr> a = args_with_implicit_vars(vec(e));
     define_base_case(func, a, cast(e.type(), 0));
     (*this) = Expr(*this) - e;
 }
 
 void FuncRefExpr::operator/=(Expr e) {
-    vector<Expr> a = args;
-    add_implicit_vars(a, vec(e));
+    vector<Expr> a = args_with_implicit_vars(vec(e));
     define_base_case(func, a, cast(e.type(), 1));
     (*this) = Expr(*this) / e;
 }
 
 FuncRefExpr::operator Expr() const {
-    assert(func.has_pure_definition() && "Can't call undefined function");
-    assert(func.values().size() == 1 &&
+    assert((func.has_pure_definition() || func.has_extern_definition()) && "Can't call undefined function");
+    assert(func.outputs() == 1 &&
            "Can't convert a reference to a function that has multiple outputs to an Expr");
     return Call::make(func, args);
 }
 
 Expr FuncRefExpr::operator[](int i) const {
-    assert(func.has_pure_definition() && "Can't call undefined function");
-    assert(func.values().size() != 1 &&
-           "Can't index into a reference to a function that only provides one output");
-    assert(i >= 0 && i < (int)func.values().size() && "index out of range");
+    assert((func.has_pure_definition() || func.has_extern_definition()) && "Can't call undefined function");
+    if (func.has_pure_definition()) {
+        assert(func.outputs() != 1 &&
+               "Can't index into a reference to a function that only provides one output");
+    } else {
+
+    }
+    assert(i >= 0 && i < func.outputs() && "index out of range");
     return Call::make(func, args, i);
 }
 
 size_t FuncRefExpr::size() const {
-    return func.values().size();
+    return func.outputs();
 }
 
 /*
 FuncRefExpr::operator Tuple() const {
     assert(func.has_pure_definition() && "Can't call undefined function");
-    assert(func.values().size() != 1 &&
+    assert(func.outputs() != 1 &&
            "Can't create a tuple from a call to a function that only provides one output");
-    Tuple tuple(std::vector<Expr>(func.values().size()));
+    Tuple tuple(std::vector<Expr>(func.outputs()));
     for (size_t i = 0; i < tuple.size(); i++) {
         tuple[i] = Call::make(func, args, i);
     }
@@ -1020,9 +1307,9 @@ FuncRefExpr::operator Tuple() const {
 
 Realization Func::realize(int x_size, int y_size, int z_size, int w_size) {
     assert(defined() && "Can't realize undefined function");
-    vector<Buffer> outputs(func.values().size());
+    vector<Buffer> outputs(func.outputs());
     for (size_t i = 0; i < outputs.size(); i++) {
-        outputs[i] = Buffer(func.values()[i].type(), x_size, y_size, z_size, w_size);
+        outputs[i] = Buffer(func.output_types()[i], x_size, y_size, z_size, w_size);
     }
     Realization r(outputs);
     realize(r);
@@ -1031,9 +1318,9 @@ Realization Func::realize(int x_size, int y_size, int z_size, int w_size) {
 
 void Func::infer_input_bounds(int x_size, int y_size, int z_size, int w_size) {
     assert(defined() && "Can't infer input bounds on an undefined function");
-    vector<Buffer> outputs(func.values().size());
+    vector<Buffer> outputs(func.outputs());
     for (size_t i = 0; i < outputs.size(); i++) {
-        outputs[i] = Buffer(func.values()[i].type(), x_size, y_size, z_size, w_size, (uint8_t *)1);
+        outputs[i] = Buffer(func.output_types()[i], x_size, y_size, z_size, w_size, (uint8_t *)1);
     }
     Realization r(outputs);
     infer_input_bounds(r);
@@ -1070,74 +1357,62 @@ private:
 
     using IRGraphVisitor::visit;
 
-    void visit(const Load *op) {
-        IRGraphVisitor::visit(op);
-
-        Buffer b;
-        string arg_name;
-        if (op->image.defined()) {
-            Internal::debug(2) << "Found an image argument: " << op->image.name() << "\n";
-            b = op->image;
-            arg_name = op->image.name();
-        } else if (op->param.defined()) {
-            Internal::debug(2) << "Found an image param argument: " << op->param.name() << "\n";
-            b = op->param.get_buffer();
-            arg_name = op->param.name();
-        } else {
-            return;
+    bool already_have(const string &name) {
+        // Ignore dependencies on the output buffers
+        if (name == output || starts_with(name, output + ".")) {
+            return true;
         }
-
-        Argument arg(arg_name, true, op->type);
-        bool already_included = false;
         for (size_t i = 0; i < arg_types.size(); i++) {
-            if (arg_types[i].name == op->name) {
-                Internal::debug(2) << "Already included.\n";
-                already_included = true;
+            if (arg_types[i].name == name) {
+                return true;
             }
         }
-        if (!already_included) {
-            if (op->param.defined()) {
-                int idx = (int)(arg_values.size());
-                image_param_args.push_back(make_pair(idx, op->param));
-            }
-            arg_types.push_back(arg);
-            if (op->image.defined()) {
-                assert(b.defined());
+        return false;
+    }
+
+    void include_parameter(Internal::Parameter p) {
+        if (!p.defined()) return;
+        if (already_have(p.name())) return;
+        arg_types.push_back(Argument(p.name(), p.is_buffer(), p.type()));
+        if (p.is_buffer()) {
+            Buffer b = p.get_buffer();
+            int idx = (int)arg_values.size();
+            image_param_args.push_back(make_pair(idx, p));
+            if (b.defined()) {
                 arg_values.push_back(b.raw_buffer());
             } else {
                 arg_values.push_back(NULL);
             }
+        } else {
+            arg_values.push_back(p.get_scalar_address());
         }
     }
 
+    void include_buffer(Buffer b) {
+        if (!b.defined()) return;
+        if (already_have(b.name())) return;
+        arg_types.push_back(Argument(b.name(), true, b.type()));
+        arg_values.push_back(b.raw_buffer());
+    }
+
+    void visit(const Load *op) {
+        IRGraphVisitor::visit(op);
+
+        include_parameter(op->param);
+        include_buffer(op->image);
+    }
+
     void visit(const Variable *op) {
-        if (op->name == output ||
-            starts_with(op->name, output + ".")) {
-            // We don't mind dependencies on the output buffer. It
-            // shouldn't be in the args list.
-            return;
-        }
+        include_parameter(op->param);
+    }
 
-        if (op->param.defined()) {
-            Argument arg(op->param.name(), op->param.is_buffer(), op->param.type());
-            bool already_included = false;
-            for (size_t i = 0; i < arg_types.size(); i++) {
-                if (arg_types[i].name == op->param.name()) {
-                    already_included = true;
-                }
-            }
-            if (!already_included) {
-                Internal::debug(2) << "Found a param: " << op->param.name() << "\n";
-                if (op->param.is_buffer()) {
-                    int idx = (int)(arg_values.size());
-                    image_param_args.push_back(make_pair(idx, op->param));
-                    arg_values.push_back(NULL);
-                } else {
-                    arg_values.push_back(op->param.get_scalar_address());
-                }
-                arg_types.push_back(arg);
+    void visit(const Call *op) {
+        IRGraphVisitor::visit(op);
 
-            }
+        // Sometimes, a buffer will be referred to by an intrinsic and nowhere else.
+        if (op->call_type == Call::Intrinsic) {
+            include_buffer(op->image);
+            include_parameter(op->param);
         }
     }
 };
@@ -1187,8 +1462,9 @@ void Func::compile_to_bitcode(const string &filename, vector<Argument> args, con
 
     validate_arguments(name(), args, lowered);
 
-    Argument me(name(), true, value().type());
-    args.push_back(me);
+    for (int i = 0; i < outputs(); i++) {
+        args.push_back(output_buffers()[i]);
+    }
 
     StmtCompiler cg;
     cg.compile(lowered, fn_name.empty() ? name() : fn_name, args);
@@ -1204,8 +1480,9 @@ void Func::compile_to_object(const string &filename, vector<Argument> args, cons
 
     validate_arguments(name(), args, lowered);
 
-    Argument me(name(), true, value().type());
-    args.push_back(me);
+    for (int i = 0; i < outputs(); i++) {
+        args.push_back(output_buffers()[i]);
+    }
 
     StmtCompiler cg;
     cg.compile(lowered, fn_name.empty() ? name() : fn_name, args);
@@ -1213,8 +1490,9 @@ void Func::compile_to_object(const string &filename, vector<Argument> args, cons
 }
 
 void Func::compile_to_header(const string &filename, vector<Argument> args, const string &fn_name) {
-    Argument me(name(), true, value().type());
-    args.push_back(me);
+    for (int i = 0; i < outputs(); i++) {
+        args.push_back(output_buffers()[i]);
+    }
 
     ofstream header(filename.c_str());
     CodeGen_C cg(header);
@@ -1228,8 +1506,9 @@ void Func::compile_to_c(const string &filename, vector<Argument> args, const str
 
     validate_arguments(name(), args, lowered);
 
-    Argument me(name(), true, value().type());
-    args.push_back(me);
+    for (int i = 0; i < outputs(); i++) {
+        args.push_back(output_buffers()[i]);
+    }
 
     ofstream src(filename.c_str());
     CodeGen_C cg(src);
@@ -1278,8 +1557,10 @@ void Func::compile_to_assembly(const string &filename, vector<Argument> args, co
     assert(defined() && "Can't compile undefined function");
 
     if (!lowered.defined()) lowered = Halide::Internal::lower(func);
-    Argument me(name(), true, value().type());
-    args.push_back(me);
+
+    for (int i = 0; i < outputs(); i++) {
+        args.push_back(output_buffers()[i]);
+    }
 
     StmtCompiler cg;
     cg.compile(lowered, fn_name.empty() ? name() : fn_name, args);
@@ -1301,17 +1582,24 @@ void Func::set_custom_allocator(void *(*cust_malloc)(size_t), void (*cust_free)(
     }
 }
 
-void Func::set_custom_do_par_for(void (*cust_do_par_for)(void (*)(int, uint8_t *), int, int, uint8_t *)) {
+void Func::set_custom_do_par_for(int (*cust_do_par_for)(int (*)(int, uint8_t *), int, int, uint8_t *)) {
     custom_do_par_for = cust_do_par_for;
     if (compiled_module.set_custom_do_par_for) {
         compiled_module.set_custom_do_par_for(cust_do_par_for);
     }
 }
 
-void Func::set_custom_do_task(void (*cust_do_task)(void (*)(int, uint8_t *), int, uint8_t *)) {
+void Func::set_custom_do_task(int (*cust_do_task)(int (*)(int, uint8_t *), int, uint8_t *)) {
     custom_do_task = cust_do_task;
     if (compiled_module.set_custom_do_task) {
         compiled_module.set_custom_do_task(cust_do_task);
+    }
+}
+
+void Func::set_custom_trace(Internal::JITCompiledModule::TraceFn t) {
+    custom_trace = t;
+    if (compiled_module.set_custom_trace) {
+        compiled_module.set_custom_trace(t);
     }
 }
 
@@ -1327,7 +1615,7 @@ void Func::realize(Realization dst) {
     // Check the type and dimensionality of the buffer
     for (size_t i = 0; i < dst.size(); i++) {
         assert(dst[i].dimensions() == dimensions() && "Buffer and Func have different dimensionalities");
-        assert(dst[i].type() == func.values()[i].type() && "Buffer and Func have different element types");
+        assert(dst[i].type() == func.output_types()[i] && "Buffer and Func have different element types");
     }
 
     // In case these have changed since the last realization
@@ -1335,6 +1623,7 @@ void Func::realize(Realization dst) {
     compiled_module.set_custom_allocator(custom_malloc, custom_free);
     compiled_module.set_custom_do_par_for(custom_do_par_for);
     compiled_module.set_custom_do_task(custom_do_task);
+    compiled_module.set_custom_trace(custom_trace);
 
     // Update the address of the buffers we're realizing into
     for (size_t i = 0; i < dst.size(); i++) {
@@ -1356,8 +1645,8 @@ void Func::realize(Realization dst) {
     }
 
     Internal::debug(2) << "Calling jitted function\n";
-    compiled_module.wrapped_function(&(arg_values[0]));
-    Internal::debug(2) << "Back from jitted function\n";
+    int exit_status = compiled_module.wrapped_function(&(arg_values[0]));
+    Internal::debug(2) << "Back from jitted function. Exit status was " << exit_status << "\n";
 
     for (size_t i = 0; i < dst.size(); i++) {
         dst[i].set_source_module(compiled_module);
@@ -1377,7 +1666,7 @@ void Func::infer_input_bounds(Realization dst) {
     // Check the type and dimensionality of the buffer
     for (size_t i = 0; i < dst.size(); i++) {
         assert(dst[i].dimensions() == dimensions() && "Buffer and Func have different dimensionalities");
-        assert(dst[i].type() == func.values()[i].type() && "Buffer and Func have different element types");
+        assert(dst[i].type() == func.output_types()[i] && "Buffer and Func have different element types");
     }
 
     // In case these have changed since the last realization
@@ -1414,7 +1703,13 @@ void Func::infer_input_bounds(Realization dst) {
     }
 
     Internal::debug(2) << "Calling jitted function\n";
-    compiled_module.wrapped_function(&(arg_values[0]));
+    int exit_status = compiled_module.wrapped_function(&(arg_values[0]));
+    if (exit_status) {
+        std::cerr << "Calling " << name()
+                  << " in bounds inference mode returned non-success ("
+                  << exit_status << ")\n";
+        assert(false);
+    }
     Internal::debug(2) << "Back from jitted function\n";
 
     // Now allocate the resulting buffers
@@ -1470,14 +1765,15 @@ void *Func::compile_jit() {
     lowered.accept(&infer_args);
     arg_values = infer_args.arg_values;
 
-    for (size_t i = 0; i < func.values().size(); i++) {
+    for (int i = 0; i < func.outputs(); i++) {
         string buffer_name = name();
-        if (func.values().size() > 1) {
+        if (func.outputs() > 1) {
             buffer_name = buffer_name + '.' + int_to_string(i);
         }
-        Argument me(buffer_name, true, func.values()[i].type());
+        Type t = func.output_types()[i];
+        Argument me(buffer_name, true, t);
         infer_args.arg_types.push_back(me);
-        arg_values.push_back(NULL); // A spot to put the address of the output buffers
+        arg_values.push_back(NULL); // A spot to put the address of this output buffer
     }
     image_param_args = infer_args.image_param_args;
 
@@ -1535,5 +1831,9 @@ void Func::test() {
     std::cout << "Func test passed\n";
 
 }
+
+Var _("_");
+Var _0("_0"), _1("_1"), _2("_2"), _3("_3"), _4("_4"),
+    _5("_5"), _6("_6"), _7("_7"), _8("_8"), _9("_9");
 
 }

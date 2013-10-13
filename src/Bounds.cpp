@@ -8,10 +8,8 @@
 #include "Util.h"
 #include "Var.h"
 #include "Debug.h"
+#include "CSE.h"
 #include <iostream>
-
-
-// This file is largely a port of src/bounds.ml
 
 namespace Halide {
 namespace Internal {
@@ -53,16 +51,83 @@ private:
     }
 
     void visit(const Cast *op) {
-        // Assume no overflow
+
         op->value.accept(this);
         Expr min_a = min, max_a = max;
 
-        min = min_a.defined() ? Cast::make(op->type, min_a) : Expr();
+        if (min_a.same_as(op->value) && max_a.same_as(op->value)) {
+            min = max = op;
+            return;
+        }
 
-        if (min_a.same_as(max_a)) {
-            max = min;
+        Type to = op->type;
+        Type from = op->value.type();
+
+        if (min_a.defined() && min_a.same_as(max_a)) {
+            min = max = Cast::make(to, min_a);
+            return;
+        }
+
+        // If overflow is impossible, cast the min and max. If it's
+        // possible, use the bounds of the destination type.
+        bool could_overflow = true;
+        if (to.is_float()) {
+            could_overflow = false;
+        } else if (to.is_int() && from.is_int() && to.bits >= from.bits) {
+            could_overflow = false;
+        } else if (to.is_uint() && from.is_uint() && to.bits >= from.bits) {
+            could_overflow = false;
+        } else if (to.is_int() && from.is_uint() && to.bits > from.bits) {
+            could_overflow = false;
+        } else if (to.is_int() && to.bits >= 32) {
+            // Warning: dubious code ahead.
+
+            // If we cast to an int32 or greater, assume that it won't
+            // overflow. Otherwise expressions like
+            // cast<int32_t>(bounded_float) barf.
+            could_overflow = false;
+        }
+
+        // If min and max are different constants that fit into the
+        // narrower type, we should allow it.
+        if (from == Int(32) && min_a.defined() && max_a.defined()) {
+            if (const IntImm *min_int = min_a.as<IntImm>()) {
+                if (const IntImm *max_int = max_a.as<IntImm>()) {
+                    if (to.is_uint() && to.bits <= 32 &&
+                        min_int->value > 0 &&
+                        (to.bits == 32 || (max_int->value < (1 << to.bits)))) {
+                        could_overflow = false;
+                    } else if (to.is_int() && to.bits <= 32 &&
+                               min_int->value >= -(1 << (to.bits-1)) &&
+                               max_int->value < (1 << (to.bits-1))) {
+                        could_overflow = false;
+                    }
+                }
+            }
+        }
+
+        if (from == Float(32) && min_a.defined() && max_a.defined()) {
+            if (const FloatImm *min_float = min_a.as<FloatImm>()) {
+                if (const FloatImm *max_float = max_a.as<FloatImm>()) {
+                    double max_magnitude = ::pow(2.0, to.bits-1);
+                    if (to.is_uint() &&
+                        min_float->value >= 0.0f &&
+                        max_float->value < 2.0*max_magnitude) {
+                        could_overflow = false;
+                    } else if (to.is_int() &&
+                               min_float->value >= -max_magnitude &&
+                               max_float->value < max_magnitude) {
+                        could_overflow = false;
+                    }
+                }
+            }
+        }
+
+        if (!could_overflow) {
+            min = min_a.defined() ? Cast::make(to, min_a) : Expr();
+            max = max_a.defined() ? Cast::make(to, max_a) : Expr();
         } else {
-            max = max.defined() ? Cast::make(op->type, max) : Expr();
+            bounds_of_type(to);
         }
     }
 
@@ -84,6 +149,12 @@ private:
         op->b.accept(this);
         Expr min_b = min, max_b = max;
 
+        if (min_a.same_as(op->a) && max_a.same_as(op->a) &&
+            min_b.same_as(op->b) && max_b.same_as(op->b)) {
+            min = max = op;
+            return;
+        }
+
         min = (min_b.defined() && min_a.defined()) ? Add::make(min_a, min_b) : Expr();
 
         if (min_a.same_as(max_a) && min_b.same_as(max_b)) {
@@ -98,6 +169,12 @@ private:
         Expr min_a = min, max_a = max;
         op->b.accept(this);
         Expr min_b = min, max_b = max;
+
+        if (min_a.same_as(op->a) && max_a.same_as(op->a) &&
+            min_b.same_as(op->b) && max_b.same_as(op->b)) {
+            min = max = op;
+            return;
+        }
 
         min = (max_b.defined() && min_a.defined()) ? Sub::make(min_a, max_b) : Expr();
         if (min_a.same_as(max_a) && min_b.same_as(max_b)) {
@@ -120,23 +197,51 @@ private:
             min = Expr(); max = Expr(); return;
         }
 
+        if (min_a.same_as(op->a) && max_a.same_as(op->a) &&
+            min_b.same_as(op->b) && max_b.same_as(op->b)) {
+            min = max = op;
+            return;
+        }
+
         if (min_a.same_as(max_a) && min_b.same_as(max_b)) {
             // A and B are constant
             min = max = min_a * min_b;
         } else if (min_a.same_as(max_a)) {
             // A is constant
-            Expr a = min_a * min_b;
-            Expr b = min_a * max_b;
-            Expr cmp = min_a > make_zero(min_a.type());
-            min = select(cmp, a, b);
-            max = select(cmp, b, a);
+            if (is_zero(min_a)) {
+                min = max = min_a;
+            } else if (is_positive_const(min_a)) {
+                min = min_b * min_a;
+                max = max_b * min_a;
+            } else if (is_negative_const(min_a)) {
+                min = max_b * min_a;
+                max = min_b * min_a;
+            } else {
+                // Sign of a is unknown
+                Expr a = min_a * min_b;
+                Expr b = min_a * max_b;
+                Expr cmp = min_a > make_zero(min_a.type());
+                min = select(cmp, a, b);
+                max = select(cmp, b, a);
+            }
         } else if (min_b.same_as(max_b)) {
             // B is constant
-            Expr a = min_b * min_a;
-            Expr b = min_b * max_a;
-            Expr cmp = min_b > make_zero(min_b.type());
-            min = select(cmp, a, b);
-            max = select(cmp, b, a);
+            if (is_zero(min_b)) {
+                min = max = min_a;
+            } else if (is_positive_const(min_b)) {
+                min = min_a * min_b;
+                max = max_a * min_b;
+            } else if (is_negative_const(min_b)) {
+                min = max_a * min_b;
+                max = min_a * min_b;
+            } else {
+                // Sign of b is unknown
+                Expr a = min_b * min_a;
+                Expr b = min_b * max_a;
+                Expr cmp = min_b > make_zero(min_b.type());
+                min = select(cmp, a, b);
+                max = select(cmp, b, a);
+            }
         } else {
 
             Expr a = min_a * min_b;
@@ -163,6 +268,12 @@ private:
             min = Expr(); max = Expr(); return;
         }
 
+        if (min_a.same_as(op->a) && max_a.same_as(op->a) &&
+            min_b.same_as(op->b) && max_b.same_as(op->b)) {
+            min = max = op;
+            return;
+        }
+
         if (min_b.same_as(max_b)) {
             // Constant denominator
             Expr a = min_a / min_b;
@@ -172,11 +283,13 @@ private:
             max = select(cmp, b, a);
         } else {
             // if we can't statically prove that the divisor can't span zero, then we're unbounded
-            Expr min_is_positive = simplify(min_b > make_zero(min_b.type()));
-            Expr max_is_negative = simplify(max_b < make_zero(max_b.type()));
+            bool min_is_positive = is_positive_const(min_b) ||
+                equal(const_true(), simplify(min_b > make_zero(min_b.type())));
+            bool max_is_negative = is_negative_const(max_b) ||
+                equal(const_true(), simplify(max_b < make_zero(max_b.type())));
             if (!equal(min_b, max_b) &&
-                !equal(min_is_positive, const_true()) &&
-                !equal(max_is_negative, const_true())) {
+                !min_is_positive &&
+                !max_is_negative) {
                 min = Expr();
                 max = Expr();
                 return;
@@ -204,6 +317,12 @@ private:
             min = Expr(); max = Expr(); return;
         }
 
+        if (min_a.same_as(op->a) && max_a.same_as(op->a) &&
+            min_b.same_as(op->b) && max_b.same_as(op->b)) {
+            min = max = op;
+            return;
+        }
+
         if (min_a.defined() && min_a.same_as(max_a) && min_b.same_as(max_b)) {
             min = max = Mod::make(min_a, min_b);
         } else {
@@ -226,9 +345,16 @@ private:
 
         debug(3) << "Bounds of " << Expr(op) << "\n";
 
+        if (min_a.same_as(op->a) && max_a.same_as(op->a) &&
+            min_b.same_as(op->b) && max_b.same_as(op->b)) {
+            min = max = op;
+            return;
+        }
+
         if (min_a.defined() && min_a.same_as(min_b) &&
             max_a.defined() && max_a.same_as(max_b)) {
-            min = max = Min::make(min_a, min_b);
+            min = min_a;
+            max = max_a;
             return;
         }
 
@@ -256,9 +382,16 @@ private:
 
         debug(3) << "Bounds of " << Expr(op) << "\n";
 
+        if (min_a.same_as(op->a) && max_a.same_as(op->a) &&
+            min_b.same_as(op->b) && max_b.same_as(op->b)) {
+            min = max = op;
+            return;
+        }
+
         if (min_a.defined() && min_a.same_as(min_b) &&
             max_a.defined() && max_a.same_as(max_b)) {
-            min = max = Min::make(min_a, min_b);
+            min = min_a;
+            max = max_a;
             return;
         }
 
@@ -344,10 +477,14 @@ private:
             min = Expr(); max = Expr(); return;
         }
 
-        min = Min::make(min_a, min_b);
+        if (min_a.same_as(min_b)) {
+            min = min_a;
+        } else {
+            min = Min::make(min_a, min_b);
+        }
 
-        if (min_a.same_as(max_a) && min_b.same_as(max_b)) {
-            max = min;
+        if (max_a.same_as(max_b)) {
+            max = max_a;
         } else {
             max = Max::make(max_a, max_b);
         }
@@ -409,10 +546,6 @@ private:
         assert(false && "Bounds of statement");
     }
 
-    void visit(const PrintStmt *) {
-        assert(false && "Bounds of statement");
-    }
-
     void visit(const AssertStmt *) {
         assert(false && "Bounds of statement");
     }
@@ -447,11 +580,11 @@ private:
 };
 
 Interval bounds_of_expr_in_scope(Expr expr, const Scope<Interval> &scope) {
-    debug(3) << "computing bounds_of_expr_in_scope " << expr << "\n";
+    //debug(3) << "computing bounds_of_expr_in_scope " << expr << "\n";
     Bounds b;
     b.scope = scope;
     expr.accept(&b);
-    debug(3) << "bounds_of_expr_in_scope " << expr << " = " << b.min << ", " << b.max << "\n";
+    //debug(3) << "bounds_of_expr_in_scope " << expr << " = " << simplify(b.min) << ", " << simplify(b.max) << "\n";
     return Interval(b.min, b.max);
 }
 
@@ -507,10 +640,12 @@ private:
     using IRVisitor::visit;
 
     void visit(const LetStmt *op) {
-        op->value.accept(this);
         Interval value_bounds = bounds_of_expr_in_scope(op->value, scope);
         scope.push(op->name, value_bounds);
+        debug(3) << "Adding " << op->name << " = " << op->value << " to scope: " << simplify(value_bounds.min) << ", " << simplify(value_bounds.max) << "\n";
+
         op->body.accept(this);
+        debug(3) << "Removing " << op->name << " from scope\n";
         scope.pop(op->name);
     }
 
@@ -528,9 +663,12 @@ private:
         Interval min_bounds = bounds_of_expr_in_scope(op->min, scope);
         Interval extent_bounds = bounds_of_expr_in_scope(op->extent, scope);
         Expr min = min_bounds.min;
-        Expr max = (min_bounds.max + extent_bounds.max) - 1;
+        Expr max;
+        if (min_bounds.max.defined() && extent_bounds.max.defined()) {
+            max = (min_bounds.max + extent_bounds.max) - 1;
+        }
         scope.push(op->name, Interval(min, max));
-        debug(3) << "Adding " << op->name << " to scope\n";
+        debug(3) << "Adding " << op->name << " to scope: " << min << ", " << max << "\n";
         op->body.accept(this);
         debug(3) << "Removing " << op->name << " from scope\n";
         scope.pop(op->name);
@@ -564,7 +702,7 @@ private:
                     debug(3) << "Bounds of call to " << op->name << " in dimension " << i << ": "
                              << bounds.min << ", " << bounds.max << "\n";
                 }
-                
+
                 if (r.size() > i) {
                     r[i] = interval_union(r[i], bounds);
                 } else {
@@ -590,13 +728,24 @@ private:
     }
 
     void visit(const Pipeline *op) {
-        op->produce.accept(this);
+        // If we're considering only this function, and we're not
+        // considering provides, there's no point descending here.
+        if (func != op->name || consider_provides) {
+            op->produce.accept(this);
+        }
+
         if (op->update.defined()) {
             inside_update.push(op->name, 0);
             op->update.accept(this);
             inside_update.pop(op->name);
         }
-        op->consume.accept(this);
+
+        // If we're considering only this function, and we're not
+        // considering calls, there's no point descending here.
+        if (func != op->name || consider_calls) {
+            op->consume.accept(this);
+        }
+
     }
 };
 

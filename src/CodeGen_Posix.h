@@ -72,11 +72,9 @@ protected:
         llvm::Value *saved_stack;
     };
 
-    /** The allocations currently in scope */
+    /** The allocations currently in scope. The stack gets pushed when
+     * we enter a new function. */
     Scope<Allocation> allocations;
-
-    /** Free stack space blocks to reuse. */
-    std::vector<Allocation> free_stack_blocks;
 
     /** Allocates some memory on either the stack or the heap, and
      * returns an Allocation object describing it. For heap
@@ -90,7 +88,7 @@ protected:
      * name.host that provides the base pointer.
      *
      * When the allocation can be freed call 'free_allocation', and
-     * when it goes out of scope call 'finalize_allocation'. */
+     * when it goes out of scope call 'destroy_allocation'. */
     Allocation create_allocation(const std::string &name, Type type, Expr size);
 
     /** Free the memory backing an allocation and pop it from the
@@ -104,15 +102,7 @@ protected:
      * stack removes the entry from the free_stack_blocks list. */
     void destroy_allocation(Allocation alloc);
 
-    /** Restores the stack pointer to the given value. Call this to
-     * free a stack variable. */
-    void restore_stack(llvm::Value *saved_stack);
-
-    /** Save the stack directly. You only need to call this if you're
-     * doing your own allocas. */
-    llvm::Value *save_stack();
-
-    /** Free all heap allocations in scope */
+    /** Free all heap allocations in scope. */
     void prepare_for_early_exit();
 
     /** Initialize the CodeGen internal state to compile a fresh module */

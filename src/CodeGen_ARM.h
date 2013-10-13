@@ -12,8 +12,9 @@ namespace Internal {
 
 /** Bitmask flags for specifying code generation options to CodeGen_ARM. */
 enum CodeGen_ARM_Options {
-    ARM_Android = 1,  /// Compile targetting the Android standard library
-    ARM_NaCl    = 2   /// Compile for Native Client (must be using the Native Client llvm tree)
+    ARM_Android = 1,  /// Compile targeting the Android standard library
+    ARM_NaCl    = 2,  /// Compile for Native Client (must be using the Native Client llvm tree)
+    ARM_IOS     = 4   /// Compile targeting iOS
 };
 
 /** A code generator that emits ARM code from a given Halide stmt. */
@@ -37,6 +38,9 @@ protected:
 
     /** Use the android-specific standard library */
     bool use_android;
+
+    /** Use the ios-specific standard library */
+    bool use_ios;
 
     /** Compile for Native Client. */
     bool use_nacl;
@@ -65,7 +69,20 @@ protected:
     void visit(const Select *);
     void visit(const Store *);
     void visit(const Load *);
+    void visit(const Call *);
     // @}
+
+    /** Various patterns to peephole match against */
+    struct Pattern {
+        std::string intrin;
+        Expr pattern;
+        enum PatternType {Simple = 0, LeftShift, RightShift};
+        PatternType type;
+        Pattern() {}
+        Pattern(std::string i, Expr p, PatternType t = Simple) : intrin(i), pattern(p), type(t) {}
+    };
+    std::vector<Pattern> casts, left_shifts, averagings, negations;
+
 
     std::string mcpu() const;
     std::string mattrs() const;

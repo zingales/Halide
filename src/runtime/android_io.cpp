@@ -8,16 +8,18 @@ extern "C" {
 
 extern void __android_log_vprint(int, const char *, const char *, va_list);
 
-extern uint32_t fwrite(void *, uint32_t, uint32_t, void *);
+extern size_t fwrite(const void *, size_t, size_t, void *);
 extern void *fopen(const char *, const char *);
-extern void fclose(void *);
+extern int fclose(void *);
 
 WEAK int halide_printf(const char * fmt, ...) {
     va_list args;
     va_start(args,fmt);
     __android_log_vprint(7, "halide", fmt, args);
     va_end(args);
-    return 0;
+    // Profiler assumes that return value <=0 is failure,
+    // so return something else here.
+    return 1;
 }
 
 static bool write_stub(const void *bytes, size_t size, void *f) {

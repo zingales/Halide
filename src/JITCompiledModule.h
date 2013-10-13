@@ -31,7 +31,7 @@ struct JITCompiledModule {
     /** A slightly more type-safe wrapper around the raw halide
      * module. Takes it arguments as an array of pointers that
      * correspond to the arguments to \ref function */
-    void (*wrapped_function)(const void **);
+    int (*wrapped_function)(const void **);
 
     /** JITed helpers to interact with device-mapped buffer_t
      * objects. These pointers may be NULL if not compiling for a
@@ -54,16 +54,26 @@ struct JITCompiledModule {
 
     /** Set a custom parallel for loop launcher. See
      * \ref Func::set_custom_do_par_for */
-    void (*set_custom_do_par_for)(void (*custom_do_par_for)(void (*)(int, unsigned char *), int, int, unsigned char *));
+    typedef int (*HalideTask)(int, uint8_t *);
+    void (*set_custom_do_par_for)(int (*custom_do_par_for)(HalideTask, int, int, uint8_t *));
 
     /** Set a custom do parallel task. See
      * \ref Func::set_custom_do_task */
-    void (*set_custom_do_task)(void (*custom_do_task)(void (*)(int, unsigned char *), int, unsigned char *));
+    void (*set_custom_do_task)(int (*custom_do_task)(HalideTask, int, uint8_t *));
+
+    /** Set a custom trace function. See \ref Func::set_custom_trace. */
+    typedef void (*TraceFn)(const char *, int, int, int, int, int, const void *, int, const int *);
+    void (*set_custom_trace)(TraceFn);
 
     /** Shutdown the thread pool maintained by this JIT module. This
      * is also done automatically when the last reference to this
      * module is destroyed. */
     void (*shutdown_thread_pool)();
+
+    /** Close the tracing file this module may be writing to. Also
+     * done automatically when the last reference to this module is
+     * destroyed. */
+    void (*shutdown_trace)();
 
     // The JIT Module Allocator holds onto the memory storing the functions above.
     IntrusivePtr<JITModuleHolder> module;
@@ -78,7 +88,9 @@ struct JITCompiledModule {
         set_custom_allocator(NULL),
         set_custom_do_par_for(NULL),
         set_custom_do_task(NULL),
-        shutdown_thread_pool(NULL) {}
+        set_custom_trace(NULL),
+        shutdown_thread_pool(NULL),
+        shutdown_trace(NULL) {}
 
     /** Take an llvm module and compile it. Populates the function
      * pointer members above with the result. */
