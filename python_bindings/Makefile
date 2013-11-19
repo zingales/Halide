@@ -3,7 +3,7 @@ all: halide/cHalide_wrap.cxx halide/_cHalide.so
 halide/_cHalide.so: halide/cHalide_wrap.cxx halide/*.py halide/cHalide.i ../src/*.cpp ../src/runtime/*.cpp ../src/*.h ../include/*.h halide/py_util.cpp halide/py_util.h halide/expand_types.h setup.py
 	python setup.py build_ext --inplace
 
-halide/cHalide_wrap.cxx: halide/cHalide.i ../src/*.cpp ../src/runtime/*.cpp ../src/*.h ../include/*.h halide/py_util.cpp halide/py_util.h halide/expand_types.h setup.py
+halide/cHalide_wrap.cxx: halide/cHalide.i ../src/*.cpp ../src/runtime/*.cpp ../src/*.h ../include/*.h halide/py_util.cpp halide/py_util.h halide/expand_types.h
 	make -C ..
 	swig -c++ -python -w362,325,314,389,381,382,361,401,503,509 -I../include halide/cHalide.i
 
