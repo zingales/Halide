@@ -145,22 +145,6 @@ DEFINE_TYPE(float)
 DEFINE_TYPE(double)
 #undef DEFINE_TYPE
 
-#define DEFINE_TYPE(T) Image<T> load_png(Image<T> a, std::string b);
-DEFINE_TYPE(uint8_t)
-DEFINE_TYPE(uint16_t)
-DEFINE_TYPE(uint32_t)
-DEFINE_TYPE(float)
-DEFINE_TYPE(double)
-#undef DEFINE_TYPE
-
-#define DEFINE_TYPE(T) void save_png(Image<T> a, std::string b);
-DEFINE_TYPE(uint8_t)
-DEFINE_TYPE(uint16_t)
-DEFINE_TYPE(uint32_t)
-DEFINE_TYPE(float)
-DEFINE_TYPE(double)
-#undef DEFINE_TYPE
-
 void exit_on_signal();
 
 #define DEFINE_TYPE(T) std::string image_to_string(const Image<T> &a);

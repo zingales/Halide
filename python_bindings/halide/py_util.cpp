@@ -3,7 +3,6 @@
    ----------------------------------------------------------------------- */
 
 #include "py_util.h"
-#include "../apps/support/image_io.h"
 #include <signal.h>
 #include <string>
 #include "Python.h"
@@ -100,23 +99,6 @@ void set(ImageParam &a, const Buffer &b) { a.set(b); }
 void set(Param<T> &a, int b) { a.set(b); } \
 void set(Param<T> &a, double b) { a.set(T(b)); }
 #include "expand_types.h"
-#undef DEFINE_TYPE
-
-#define DEFINE_TYPE(T) Image<T> load_png(Image<T> a, std::string b) { return load<T>(b); }
-DEFINE_TYPE(uint8_t)
-DEFINE_TYPE(uint16_t)
-DEFINE_TYPE(uint32_t)
-DEFINE_TYPE(float)
-DEFINE_TYPE(double)
-//#include "expand_types.h"
-#undef DEFINE_TYPE
-
-#define DEFINE_TYPE(T) void save_png(Image<T> a, std::string b) { save(a, b); }
-DEFINE_TYPE(uint8_t)
-DEFINE_TYPE(uint16_t)
-DEFINE_TYPE(uint32_t)
-DEFINE_TYPE(float)
-DEFINE_TYPE(double)
 #undef DEFINE_TYPE
 
 void signal_handler(int sig_num) {
