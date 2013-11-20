@@ -640,8 +640,8 @@ def _numpy_to_type(a):
 
 def _load_png(_in):
     if isinstance(_in, (str, unicode)):
-        _in = open(_in)
-    reader = png.Reader(_in)
+        _in = open(_in, 'rb')
+    reader = png.Reader(file=_in)
     im = reader.asDirect()
     a = numpy.vstack(im[2]).astype(numpy.uint8)
     x, y=im[0], im[1]
