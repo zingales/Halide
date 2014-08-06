@@ -45,7 +45,8 @@ std::string serialize(std::vector<Specialization> specs);
 std::string serialize(std::vector<Dim> dims);
 
 std::string serialize(Schedule s, std::string name);
-std::string serialize(Schedule s) {
+
+inline std::string serialize(Schedule s) {
   return serialize(s, "func");
 }
 

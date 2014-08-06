@@ -1,7 +1,5 @@
 #include "SerializeSchedule.h"
 
-//#include "Halide.h"
-
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -222,7 +220,6 @@ std::string serialize(std::vector<Dim> dims) {
   json += "]";
   return json;
 }
-
 
 std::string serialize(Schedule s, std::string name) {
 
