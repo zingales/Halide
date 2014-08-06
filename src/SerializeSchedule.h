@@ -54,7 +54,7 @@ std::string serialize(IntrusivePtr<ScheduleContents> contents );
 
 }
 //This is purpsofully in the Halide namespace but not in the Halide::Internal one.
-EXPORT void serialize_schedule(Func func, std::string filename);
+EXPORT void serialize_schedule(Func func, std::string filename, bool recurse = true);
 
 }
 #endif

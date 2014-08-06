@@ -1,5 +1,7 @@
 #include "SerializeSchedule.h"
 
+#include "CallMap.h"
+
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -226,7 +228,7 @@ std::string serialize(Schedule s, std::string name) {
   std::string json = "{ ";
 
   //no comments allowed must add function name
-  json += pair("name", name, true);
+  json += pair("name", name, true) +"\n";
   //race condition
   json += pair(std::string("allow_race_conditions"), s.allow_race_conditions(), true) + "\n";
  
@@ -275,17 +277,24 @@ std::string serialize(IntrusivePtr<ScheduleContents> contents ) {
 
 }
 
-void serialize_schedule(Func func, std::string filename) {
+void serialize_schedule(Func func, std::string filename, bool recurse) {
   //"/afs/csail.mit.edu/u/z/zingales/saman/opentuner/examples/halide/trial.json",
   std::ofstream myfile; 
   myfile.open(filename.c_str(), std::ios::app);
 
   // Comments are not legal json, we will eventually want to add it to the schedule file.
-  myfile << "// func name: " << func.name()<< "\n";
-  Internal::Schedule s = func.function().schedule();
-  
-  myfile << Internal::serialize(s);
-  myfile << "\n\n";
+  // myfile << "// func name: " << func.name()<< "\n";
+  myfile << "[\n";
+  myfile<< Internal::serialize(func.function().schedule(), func.name());
+  if(recurse) {
+    std::map<std::string, Internal::Function> calls = Internal::find_all_calls(func);
+    typedef std::map<std::string, Internal::Function>::iterator it_type;
+    for(it_type it = calls.begin(); it != calls.end(); it++) {
+      myfile << ",\n";
+      myfile << Internal::serialize(it->second.schedule(), it->first);
+    }
+  }
+  myfile << "]\n\n";
   myfile.close();
 
 }
