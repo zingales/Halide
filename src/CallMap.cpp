@@ -77,15 +77,28 @@ public:
 
 };
 
-map<std::string, Function> find_all_calls(Func root) {
+// returns all calls recurivley
+map<std::string, Function> find_calls(Func root, bool recurse) {
     const Function f = root.function();
-    FindAllCalls local_calls(true);
+    FindAllCalls all_calls(recurse);
     for (size_t i = 0; i < f.values().size(); i++) {
-        f.values()[i].accept(&local_calls);
+        f.values()[i].accept(&all_calls);
     }
-
-    return local_calls.calls;
+    return all_calls.calls;
 }
+
+map<std::string, Function> find_update_calls(Func root) {
+    FindAllCalls update_calls(false);
+    const Function f = root.function();
+    for (size_t i = 0; i < f.reductions().size(); i++) {
+      for (size_t j = 0; j < f.reductions()[i].values.size(); j++) {
+        f.reductions()[i].values[j].accept(&update_calls);
+      }
+    }
+   return update_calls.calls;
+}
+
+
 
 } // end of Halide::Internal namespace
 }

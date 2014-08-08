@@ -223,7 +223,8 @@ std::string serialize(std::vector<Dim> dims) {
   return json;
 }
 
-std::string serialize(Schedule s, std::string name) {
+std::string serialize(Schedule s, std::string name,
+      std::map<std::string, std::string> additional) {
 
   std::string json = "{ ";
 
@@ -261,6 +262,13 @@ std::string serialize(Schedule s, std::string name) {
   ////dims
   json += serialize(s.dims()) +",\n";
 
+  // Any additional params 
+  // Be careful beacuse you can override other parameters!
+  typedef std::map<std::string, std::string>::iterator iterator;
+  for(iterator it = additional.begin(); it != additional.end(); it++) {
+    json += it->first + ":" + it->second + ",\n";
+  }
+
   //touched
   json += pair("touched", s.touched(), false);
 
@@ -268,16 +276,35 @@ std::string serialize(Schedule s, std::string name) {
   return json;
 }
 
-std::string serialize(IntrusivePtr<ScheduleContents> contents ) {
+
+std::string serialize(IntrusivePtr<ScheduleContents> contents, 
+                     std::map<std::string, std::string> additional) {
   // It would make more sense for the schedule to use call the ScheduleContents serialize method
   // however, you can't get the ScheduleContents from a schedule so we just propmote 
   // ScheduleContents to schedule. 
-  return serialize(Schedule(contents));
+  return serialize(Schedule(contents), additional);
 }
+
 
 }
 
-void serialize_schedule(Func func, std::string filename, bool recurse) {
+// the following functions should eventually be moved into a seperate file
+
+std::string stringify(std::map<std::string, Internal::Function> le_map) {
+  std::string json = "["; 
+  typedef std::map<std::string, Internal::Function>::iterator it_type;
+  it_type it = le_map.begin();
+  while (it != le_map.end()) {
+    json += Internal::stringify(it->first);
+    ++it;
+    if (it != le_map.end()) {
+      json+= ", ";
+    }
+  }
+  return json + "]";
+}
+
+void serialize_schedule_for_opentuner(Func func, std::string filename) {
   //"/afs/csail.mit.edu/u/z/zingales/saman/opentuner/examples/halide/trial.json",
   std::ofstream myfile; 
   myfile.open(filename.c_str(), std::ios::app);
@@ -285,14 +312,27 @@ void serialize_schedule(Func func, std::string filename, bool recurse) {
   // Comments are not legal json, we will eventually want to add it to the schedule file.
   // myfile << "// func name: " << func.name()<< "\n";
   myfile << "[\n";
-  myfile<< Internal::serialize(func.function().schedule(), func.name());
-  if(recurse) {
-    std::map<std::string, Internal::Function> calls = Internal::find_all_calls(func);
-    typedef std::map<std::string, Internal::Function>::iterator it_type;
-    for(it_type it = calls.begin(); it != calls.end(); it++) {
-      myfile << ",\n";
-      myfile << Internal::serialize(it->second.schedule(), it->first);
-    }
+
+  std::map<std::string, std::string> root_map;
+  
+  root_map["\"calls\""] = stringify(Internal::find_calls(func, false));
+  root_map["\"update_calls\""] = stringify(Internal::find_update_calls(func));
+  
+
+  myfile<< Internal::serialize(func.function().schedule(), func.name(), root_map);
+  
+
+  std::map<std::string, Internal::Function> calls = Internal::find_calls(func, true);
+  typedef std::map<std::string, Internal::Function>::iterator it_type;
+  for(it_type it = calls.begin(); it != calls.end(); it++) {
+    myfile << ",\n";
+
+    std::map<std::string, std::string> add_map;
+    add_map["calls"] = stringify(Internal::find_calls(func, false));
+    add_map["update_calls"] = stringify(Internal::find_update_calls(func));
+    
+    myfile << Internal::serialize(it->second.schedule(), it->first, add_map);
+
   }
   myfile << "]\n\n";
   myfile.close();

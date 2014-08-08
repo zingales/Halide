@@ -44,17 +44,20 @@ std::string serialize(std::vector<Specialization> specs);
 
 std::string serialize(std::vector<Dim> dims);
 
-std::string serialize(Schedule s, std::string name);
+std::string serialize(Schedule s, std::string name, 
+      std::map<std::string, std::string> additional= std::map<std::string, std::string>() );
 
-inline std::string serialize(Schedule s) {
-  return serialize(s, "func");
+inline std::string serialize(Schedule s,
+      std::map<std::string, std::string> additional= std::map<std::string, std::string>() ){
+  return serialize(s, "func", additional);
 }
 
-std::string serialize(IntrusivePtr<ScheduleContents> contents ); 
+std::string serialize(IntrusivePtr<ScheduleContents> contents, 
+                      std::map<std::string, std::string> additional= std::map<std::string, std::string>() );
 
-}
+} //end Internal namespace
 //This is purpsofully in the Halide namespace but not in the Halide::Internal one.
-EXPORT void serialize_schedule(Func func, std::string filename, bool recurse = true);
+EXPORT void serialize_schedule_for_opentuner(Func func, std::string filename);
 
 }
 #endif
