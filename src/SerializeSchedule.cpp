@@ -12,6 +12,12 @@
 namespace Halide {
 namespace Internal {
 
+std::string serialize(IntImm imm) {
+  std::stringstream ss;
+  ss << imm.value;
+  return ss.str();
+}
+
 std::string serialize(Expr value) {
   std::stringstream ss;
   ss << value;
@@ -328,8 +334,8 @@ void serialize_schedule_for_opentuner(Func func, std::string filename) {
     myfile << ",\n";
 
     std::map<std::string, std::string> add_map;
-    add_map["calls"] = stringify(Internal::find_calls(func, false));
-    add_map["update_calls"] = stringify(Internal::find_update_calls(func));
+    add_map["\"calls\""] = stringify(Internal::find_calls(func, false));
+    add_map["\"update_calls\""] = stringify(Internal::find_update_calls(func));
     
     myfile << Internal::serialize(it->second.schedule(), it->first, add_map);
 

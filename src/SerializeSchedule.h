@@ -9,6 +9,7 @@
 namespace Halide {
 namespace Internal {
 
+std::string serialize(IntImm);
 
 std::string serialize(Expr value);
 
