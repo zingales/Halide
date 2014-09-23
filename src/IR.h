@@ -22,7 +22,7 @@ namespace Internal {
 
 /** A class representing a type of IR node (e.g. Add, or Mul, or
  * For). We use it for rtti (without having to compile with rtti). */
-struct IRNodeType {};
+typedef int IRNodeType;
 
 /** The abstract base classes for a node in the Halide IR. */
 struct IRNode {
@@ -47,8 +47,18 @@ struct IRNode {
      * injects run-time type identification stuff everywhere (and
      * often breaks when linking external libraries compiled
      * without it), and we only want it for IR nodes. */
-    virtual const IRNodeType *type_info() const = 0;
+    virtual IRNodeType type_info() const = 0;
+
+    /** A hash code used to accelerate deep comparisons. */
+    uint64_t hash;
 };
+
+/** Hash functions used to construct IR nodes. */
+// @{
+EXPORT uint64_t hash_string(const std::string &s);
+EXPORT uint64_t hash_float(float);
+EXPORT uint64_t hash_int(int);
+// @}
 
 template<>
 EXPORT inline RefCount &ref_count<IRNode>(const IRNode *n) {return n->ref_count;}
@@ -84,7 +94,7 @@ struct ExprNode : public BaseExprNode {
     void accept(IRVisitor *v) const {
         v->visit((const T *)this);
     }
-    virtual IRNodeType *type_info() const {return &_type_info;}
+    virtual IRNodeType type_info() const {return _type_info;}
     static EXPORT IRNodeType _type_info;
 };
 
@@ -93,7 +103,7 @@ struct StmtNode : public BaseStmtNode {
     void accept(IRVisitor *v) const {
         v->visit((const T *)this);
     }
-    virtual IRNodeType *type_info() const {return &_type_info;}
+    virtual IRNodeType type_info() const {return _type_info;}
     static EXPORT IRNodeType _type_info;
 };
 
@@ -120,10 +130,18 @@ struct IRHandle : public IntrusivePtr<const IRNode> {
      * }
      */
     template<typename T> const T *as() const {
-        if (ptr->type_info() == &T::_type_info) {
+        if (ptr->type_info() == T::_type_info) {
             return (const T *)ptr;
         }
         return NULL;
+    }
+
+    /** Get a hash of this Expr or Stmt. */
+    uint64_t hash() const {
+        if (!ptr) {
+            return 0x4e756c6c4e6f6465ULL; // hex for "NullNode"
+        }
+        return ptr->hash;
     }
 };
 
@@ -139,6 +157,7 @@ struct IntImm : public ExprNode<IntImm> {
         IntImm *node = new IntImm;
         node->type = Int(32);
         node->value = value;
+        node->hash = hash_int(value);
         return node;
     }
 
@@ -155,6 +174,7 @@ struct FloatImm : public ExprNode<FloatImm> {
         FloatImm *node = new FloatImm;
         node->type = Float(32);
         node->value = value;
+        node->hash = hash_float(value);
         return node;
     }
 };
@@ -167,6 +187,7 @@ struct StringImm : public ExprNode<StringImm> {
         StringImm *node = new StringImm;
         node->type = Handle();
         node->value = val;
+        node->hash = hash_string(val);
         return node;
     }
 };

@@ -4,6 +4,25 @@
 namespace Halide {
 namespace Internal {
 
+uint64_t hash_string(const std::string &s) {
+    uint64_t result = 12345;
+    for (size_t i = 0; i < s.size(); i++) {
+        result = result * 33 + s[i];
+    }
+    return result * 17;
+}
+
+uint64_t hash_float(float f) {
+    uint64_t val = reinterpret_bits<uint32_t>(f);
+    return (val << 32) | 0xdeadbeef;
+}
+
+uint64_t hash_int(int x) {
+    uint64_t val = x;
+    val *= 0x12345679;
+    return val;
+}
+
 namespace {
 
 IntImm make_immortal_int(int x) {
@@ -11,8 +30,78 @@ IntImm make_immortal_int(int x) {
     i.ref_count.increment();
     i.type = Int(32);
     i.value = x;
+    i.hash = hash_int(x);
     return i;
 }
+
+// Some hashing helpers
+struct HashCode {
+    HashCode(Expr e);
+    HashCode(Stmt e);
+    HashCode(int x);
+    HashCode(Type t);
+    HashCode(const std::string &s);
+    operator uint64_t() {return val;}
+    uint64_t val;
+    void combine(HashCode);
+};
+
+
+void HashCode::combine(HashCode h) {
+    // Taken from boost::hash_combine
+    val ^= (h.val + 0x9e3779b9 + (val << 6) + (val >> 2));
+}
+
+HashCode hash_combine(HashCode a, HashCode b) {
+    a.combine(b);
+    return a;
+}
+
+HashCode hash_combine(HashCode a, HashCode b, HashCode c) {
+    a.combine(b);
+    a.combine(c);
+    return a;
+}
+
+HashCode hash_combine(HashCode a, HashCode b, HashCode c, HashCode d) {
+    a.combine(b);
+    a.combine(c);
+    a.combine(d);
+    return a;
+}
+
+HashCode hash_combine(HashCode a, HashCode b, HashCode c, HashCode d, HashCode e) {
+    a.combine(b);
+    a.combine(c);
+    a.combine(d);
+    a.combine(e);
+    return a;
+}
+
+
+HashCode hash_combine(HashCode a, HashCode b, HashCode c, HashCode d, HashCode e, HashCode f) {
+    a.combine(b);
+    a.combine(c);
+    a.combine(d);
+    a.combine(e);
+    a.combine(f);
+    return a;
+}
+
+HashCode::HashCode(Type t) {
+    val = hash_combine(t.code, t.bits, t.width);
+}
+
+HashCode::HashCode(int x) {
+    val = x;
+    val = (val << 32) | x;
+}
+
+HashCode::HashCode(Expr e) : val(e.hash()) {}
+
+HashCode::HashCode(Stmt s) : val(s.hash()) {}
+
+HashCode::HashCode(const std::string &s) : val(hash_string(s)) {}
 
 }
 
@@ -41,6 +130,7 @@ Expr Cast::make(Type t, Expr v) {
     Cast *node = new Cast;
     node->type = t;
     node->value = v;
+    node->hash = hash_combine(Cast::_type_info, t, v);
     return node;
 }
 
@@ -53,6 +143,7 @@ Expr Add::make(Expr a, Expr b) {
     node->type = a.type();
     node->a = a;
     node->b = b;
+    node->hash = hash_combine(Add::_type_info, a, b);
     return node;
 }
 
@@ -65,6 +156,7 @@ Expr Sub::make(Expr a, Expr b) {
     node->type = a.type();
     node->a = a;
     node->b = b;
+    node->hash = hash_combine(Sub::_type_info, a, b);
     return node;
 }
 
@@ -77,6 +169,7 @@ Expr Mul::make(Expr a, Expr b) {
     node->type = a.type();
     node->a = a;
     node->b = b;
+    node->hash = hash_combine(Mul::_type_info, a, b);
     return node;
 }
 
@@ -89,6 +182,7 @@ Expr Div::make(Expr a, Expr b) {
     node->type = a.type();
     node->a = a;
     node->b = b;
+    node->hash = hash_combine(Div::_type_info, a, b);
     return node;
 }
 
@@ -101,6 +195,7 @@ Expr Mod::make(Expr a, Expr b) {
     node->type = a.type();
     node->a = a;
     node->b = b;
+    node->hash = hash_combine(Mod::_type_info, a, b);
     return node;
 }
 
@@ -113,6 +208,7 @@ Expr Min::make(Expr a, Expr b) {
     node->type = a.type();
     node->a = a;
     node->b = b;
+    node->hash = hash_combine(Min::_type_info, a, b);
     return node;
 }
 
@@ -125,6 +221,7 @@ Expr Max::make(Expr a, Expr b) {
     node->type = a.type();
     node->a = a;
     node->b = b;
+    node->hash = hash_combine(Max::_type_info, a, b);
     return node;
 }
 
@@ -137,6 +234,7 @@ Expr EQ::make(Expr a, Expr b) {
     node->type = Bool(a.type().width);
     node->a = a;
     node->b = b;
+    node->hash = hash_combine(EQ::_type_info, a, b);
     return node;
 }
 
@@ -149,6 +247,7 @@ Expr NE::make(Expr a, Expr b) {
     node->type = Bool(a.type().width);
     node->a = a;
     node->b = b;
+    node->hash = hash_combine(NE::_type_info, a, b);
     return node;
 }
 
@@ -161,6 +260,7 @@ Expr LT::make(Expr a, Expr b) {
     node->type = Bool(a.type().width);
     node->a = a;
     node->b = b;
+    node->hash = hash_combine(LT::_type_info, a, b);
     return node;
 }
 
@@ -174,6 +274,7 @@ Expr LE::make(Expr a, Expr b) {
     node->type = Bool(a.type().width);
     node->a = a;
     node->b = b;
+    node->hash = hash_combine(LE::_type_info, a, b);
     return node;
 }
 
@@ -186,6 +287,7 @@ Expr GT::make(Expr a, Expr b) {
     node->type = Bool(a.type().width);
     node->a = a;
     node->b = b;
+    node->hash = hash_combine(GT::_type_info, a, b);
     return node;
 }
 
@@ -199,6 +301,7 @@ Expr GE::make(Expr a, Expr b) {
     node->type = Bool(a.type().width);
     node->a = a;
     node->b = b;
+    node->hash = hash_combine(GE::_type_info, a, b);
     return node;
 }
 
@@ -212,6 +315,7 @@ Expr And::make(Expr a, Expr b) {
     node->type = Bool(a.type().width);
     node->a = a;
     node->b = b;
+    node->hash = hash_combine(And::_type_info, a, b);
     return node;
 }
 
@@ -225,6 +329,7 @@ Expr Or::make(Expr a, Expr b) {
     node->type = Bool(a.type().width);
     node->a = a;
     node->b = b;
+    node->hash = hash_combine(Or::_type_info, a, b);
     return node;
 }
 
@@ -235,6 +340,7 @@ Expr Not::make(Expr a) {
     Not *node = new Not;
     node->type = Bool(a.type().width);
     node->a = a;
+    node->hash = hash_combine(Not::_type_info, a);
     return node;
 }
 
@@ -253,6 +359,7 @@ Expr Select::make(Expr condition, Expr true_value, Expr false_value) {
     node->condition = condition;
     node->true_value = true_value;
     node->false_value = false_value;
+    node->hash = hash_combine(Select::_type_info, condition, true_value, false_value);
     return node;
 }
 
@@ -266,6 +373,7 @@ Expr Load::make(Type type, std::string name, Expr index, Buffer image, Parameter
     node->index = index;
     node->image = image;
     node->param = param;
+    node->hash = hash_combine(Load::_type_info, type, name, index);
     return node;
 }
 
@@ -282,6 +390,7 @@ Expr Ramp::make(Expr base, Expr stride, int width) {
     node->base = base;
     node->stride = stride;
     node->width = width;
+    node->hash = hash_combine(Ramp::_type_info, base, stride, width);
     return node;
 }
 
@@ -294,6 +403,7 @@ Expr Broadcast::make(Expr value, int width) {
     node->type = value.type().vector_of(width);
     node->value = value;
     node->width = width;
+    node->hash = hash_combine(Broadcast::_type_info, value, width);
     return node;
 }
 
@@ -306,6 +416,7 @@ Expr Let::make(std::string name, Expr value, Expr body) {
     node->name = name;
     node->value = value;
     node->body = body;
+    node->hash = hash_combine(Let::_type_info, name, value, body);
     return node;
 }
 
@@ -317,6 +428,7 @@ Stmt LetStmt::make(std::string name, Expr value, Stmt body) {
     node->name = name;
     node->value = value;
     node->body = body;
+    node->hash = hash_combine(LetStmt::_type_info, name, value, body);
     return node;
 }
 
@@ -326,6 +438,7 @@ Stmt AssertStmt::make(Expr condition, Expr message) {
     AssertStmt *node = new AssertStmt;
     node->condition = condition;
     node->message = message;
+    node->hash = hash_combine(AssertStmt::_type_info, condition, message);
     return node;
 }
 
@@ -349,6 +462,7 @@ Stmt Pipeline::make(std::string name, Stmt produce, Stmt update, Stmt consume) {
     node->produce = produce;
     node->update = update;
     node->consume = consume;
+    node->hash = hash_combine(Pipeline::_type_info, produce, update, consume);
     return node;
 }
 
@@ -365,6 +479,7 @@ Stmt For::make(std::string name, Expr min, Expr extent, ForType for_type, Stmt b
     node->extent = extent;
     node->for_type = for_type;
     node->body = body;
+    node->hash = hash_combine(For::_type_info, name, min, extent, for_type, body);
     return node;
 }
 
@@ -376,30 +491,37 @@ Stmt Store::make(std::string name, Expr value, Expr index) {
     node->name = name;
     node->value = value;
     node->index = index;
+    node->hash = hash_combine(Store::_type_info, name, value, index);
     return node;
 }
 
 Stmt Provide::make(std::string name, const std::vector<Expr> &values, const std::vector<Expr> &args) {
+    HashCode h = hash_combine(Provide::_type_info, name);
     internal_assert(!values.empty()) << "Provide of no values\n";
     for (size_t i = 0; i < values.size(); i++) {
         internal_assert(values[i].defined()) << "Provide of undefined value\n";
+        h.combine(values[i]);
     }
     for (size_t i = 0; i < args.size(); i++) {
         internal_assert(args[i].defined()) << "Provide to undefined location\n";
+        h.combine(args[i]);
     }
 
     Provide *node = new Provide;
     node->name = name;
     node->values = values;
     node->args = args;
+    node->hash = h;
     return node;
 }
 
 Stmt Allocate::make(std::string name, Type type, const std::vector<Expr> &extents,
                  Expr condition, Stmt body) {
+    HashCode h = hash_combine(Allocate::_type_info, name, type, condition, body);
     for (size_t i = 0; i < extents.size(); i++) {
         internal_assert(extents[i].defined()) << "Allocate of undefined extent\n";
         internal_assert(extents[i].type().is_scalar() == 1) << "Allocate of vector extent\n";
+        h.combine(extents[i]);
     }
     internal_assert(body.defined()) << "Allocate of undefined\n";
 
@@ -408,23 +530,30 @@ Stmt Allocate::make(std::string name, Type type, const std::vector<Expr> &extent
     node->type = type;
     node->extents = extents;
     node->condition = condition;
-
     node->body = body;
+    node->hash = h;
     return node;
 }
 
 Stmt Free::make(std::string name) {
     Free *node = new Free;
     node->name = name;
+    node->hash = hash_combine(Free::_type_info, name);
     return node;
 }
 
 Stmt Realize::make(const std::string &name, const std::vector<Type> &types, const Region &bounds, Expr condition, Stmt body) {
+    HashCode h = hash_combine(Realize::_type_info, condition, body);
     for (size_t i = 0; i < bounds.size(); i++) {
         internal_assert(bounds[i].min.defined()) << "Realize of undefined\n";
         internal_assert(bounds[i].extent.defined()) << "Realize of undefined\n";
         internal_assert(bounds[i].min.type().is_scalar()) << "Realize of vector size\n";
         internal_assert(bounds[i].extent.type().is_scalar()) << "Realize of vector size\n";
+        h.combine(bounds[i].min);
+        h.combine(bounds[i].extent);
+    }
+    for (size_t i = 0; i < types.size(); i++) {
+        h.combine(types[i]);
     }
     internal_assert(body.defined()) << "Realize of undefined\n";
     internal_assert(!types.empty()) << "Realize has empty type\n";
@@ -435,6 +564,7 @@ Stmt Realize::make(const std::string &name, const std::vector<Type> &types, cons
     node->bounds = bounds;
     node->condition = condition;
     node->body = body;
+    node->hash = h;
     return node;
 }
 
@@ -445,6 +575,7 @@ Stmt Block::make(Stmt first, Stmt rest) {
     Block *node = new Block;
     node->first = first;
     node->rest = rest;
+    node->hash = hash_combine(Block::_type_info, first, rest);
     return node;
 }
 
@@ -456,6 +587,7 @@ Stmt IfThenElse::make(Expr condition, Stmt then_case, Stmt else_case) {
     node->condition = condition;
     node->then_case = then_case;
     node->else_case = else_case;
+    node->hash = hash_combine(IfThenElse::_type_info, condition, then_case, else_case);
     return node;
 }
 
@@ -464,14 +596,17 @@ Stmt Evaluate::make(Expr v) {
 
     Evaluate *node = new Evaluate;
     node->value = v;
+    node->hash = hash_combine(Evaluate::_type_info, v);
     return node;
 }
 
 Expr Call::make(Type type, std::string name, const std::vector<Expr> &args, CallType call_type,
                 Function func, int value_index,
                 Buffer image, Parameter param) {
+    HashCode h = hash_combine(type, name, call_type, value_index);
     for (size_t i = 0; i < args.size(); i++) {
         internal_assert(args[i].defined()) << "Call of undefined\n";
+        h.combine(args[i]);
     }
     if (call_type == Halide) {
         internal_assert(value_index >= 0 &&
@@ -498,6 +633,7 @@ Expr Call::make(Type type, std::string name, const std::vector<Expr> &args, Call
     node->value_index = value_index;
     node->image = image;
     node->param = param;
+    node->hash = h;
     return node;
 }
 
@@ -509,48 +645,49 @@ Expr Variable::make(Type type, std::string name, Buffer image, Parameter param, 
     node->image = image;
     node->param = param;
     node->reduction_domain = reduction_domain;
+    node->hash = hash_combine(type, name);
     return node;
 }
 
-template<> EXPORT IRNodeType ExprNode<IntImm>::_type_info = {};
-template<> EXPORT IRNodeType ExprNode<FloatImm>::_type_info = {};
-template<> EXPORT IRNodeType ExprNode<StringImm>::_type_info = {};
-template<> EXPORT IRNodeType ExprNode<Cast>::_type_info = {};
-template<> EXPORT IRNodeType ExprNode<Variable>::_type_info = {};
-template<> EXPORT IRNodeType ExprNode<Add>::_type_info = {};
-template<> EXPORT IRNodeType ExprNode<Sub>::_type_info = {};
-template<> EXPORT IRNodeType ExprNode<Mul>::_type_info = {};
-template<> EXPORT IRNodeType ExprNode<Div>::_type_info = {};
-template<> EXPORT IRNodeType ExprNode<Mod>::_type_info = {};
-template<> EXPORT IRNodeType ExprNode<Min>::_type_info = {};
-template<> EXPORT IRNodeType ExprNode<Max>::_type_info = {};
-template<> EXPORT IRNodeType ExprNode<EQ>::_type_info = {};
-template<> EXPORT IRNodeType ExprNode<NE>::_type_info = {};
-template<> EXPORT IRNodeType ExprNode<LT>::_type_info = {};
-template<> EXPORT IRNodeType ExprNode<LE>::_type_info = {};
-template<> EXPORT IRNodeType ExprNode<GT>::_type_info = {};
-template<> EXPORT IRNodeType ExprNode<GE>::_type_info = {};
-template<> EXPORT IRNodeType ExprNode<And>::_type_info = {};
-template<> EXPORT IRNodeType ExprNode<Or>::_type_info = {};
-template<> EXPORT IRNodeType ExprNode<Not>::_type_info = {};
-template<> EXPORT IRNodeType ExprNode<Select>::_type_info = {};
-template<> EXPORT IRNodeType ExprNode<Load>::_type_info = {};
-template<> EXPORT IRNodeType ExprNode<Ramp>::_type_info = {};
-template<> EXPORT IRNodeType ExprNode<Broadcast>::_type_info = {};
-template<> EXPORT IRNodeType ExprNode<Call>::_type_info = {};
-template<> EXPORT IRNodeType ExprNode<Let>::_type_info = {};
-template<> EXPORT IRNodeType StmtNode<LetStmt>::_type_info = {};
-template<> EXPORT IRNodeType StmtNode<AssertStmt>::_type_info = {};
-template<> EXPORT IRNodeType StmtNode<Pipeline>::_type_info = {};
-template<> EXPORT IRNodeType StmtNode<For>::_type_info = {};
-template<> EXPORT IRNodeType StmtNode<Store>::_type_info = {};
-template<> EXPORT IRNodeType StmtNode<Provide>::_type_info = {};
-template<> EXPORT IRNodeType StmtNode<Allocate>::_type_info = {};
-template<> EXPORT IRNodeType StmtNode<Free>::_type_info = {};
-template<> EXPORT IRNodeType StmtNode<Realize>::_type_info = {};
-template<> EXPORT IRNodeType StmtNode<Block>::_type_info = {};
-template<> EXPORT IRNodeType StmtNode<IfThenElse>::_type_info = {};
-template<> EXPORT IRNodeType StmtNode<Evaluate>::_type_info = {};
+template<> EXPORT IRNodeType ExprNode<IntImm>::_type_info = 0;
+template<> EXPORT IRNodeType ExprNode<FloatImm>::_type_info = 1;
+template<> EXPORT IRNodeType ExprNode<StringImm>::_type_info = 2;
+template<> EXPORT IRNodeType ExprNode<Cast>::_type_info = 3;
+template<> EXPORT IRNodeType ExprNode<Variable>::_type_info = 4;
+template<> EXPORT IRNodeType ExprNode<Add>::_type_info = 5;
+template<> EXPORT IRNodeType ExprNode<Sub>::_type_info = 6;
+template<> EXPORT IRNodeType ExprNode<Mul>::_type_info = 7;
+template<> EXPORT IRNodeType ExprNode<Div>::_type_info = 8;
+template<> EXPORT IRNodeType ExprNode<Mod>::_type_info = 9;
+template<> EXPORT IRNodeType ExprNode<Min>::_type_info = 10;
+template<> EXPORT IRNodeType ExprNode<Max>::_type_info = 11;
+template<> EXPORT IRNodeType ExprNode<EQ>::_type_info = 12;
+template<> EXPORT IRNodeType ExprNode<NE>::_type_info = 13;
+template<> EXPORT IRNodeType ExprNode<LT>::_type_info = 14;
+template<> EXPORT IRNodeType ExprNode<LE>::_type_info = 15;
+template<> EXPORT IRNodeType ExprNode<GT>::_type_info = 16;
+template<> EXPORT IRNodeType ExprNode<GE>::_type_info = 17;
+template<> EXPORT IRNodeType ExprNode<And>::_type_info = 18;
+template<> EXPORT IRNodeType ExprNode<Or>::_type_info = 19;
+template<> EXPORT IRNodeType ExprNode<Not>::_type_info = 20;
+template<> EXPORT IRNodeType ExprNode<Select>::_type_info = 21;
+template<> EXPORT IRNodeType ExprNode<Load>::_type_info = 22;
+template<> EXPORT IRNodeType ExprNode<Ramp>::_type_info = 23;
+template<> EXPORT IRNodeType ExprNode<Broadcast>::_type_info = 24;
+template<> EXPORT IRNodeType ExprNode<Call>::_type_info = 25;
+template<> EXPORT IRNodeType ExprNode<Let>::_type_info = 26;
+template<> EXPORT IRNodeType StmtNode<LetStmt>::_type_info = 27;
+template<> EXPORT IRNodeType StmtNode<AssertStmt>::_type_info = 28;
+template<> EXPORT IRNodeType StmtNode<Pipeline>::_type_info = 29;
+template<> EXPORT IRNodeType StmtNode<For>::_type_info = 30;
+template<> EXPORT IRNodeType StmtNode<Store>::_type_info = 31;
+template<> EXPORT IRNodeType StmtNode<Provide>::_type_info = 32;
+template<> EXPORT IRNodeType StmtNode<Allocate>::_type_info = 33;
+template<> EXPORT IRNodeType StmtNode<Free>::_type_info = 34;
+template<> EXPORT IRNodeType StmtNode<Realize>::_type_info = 35;
+template<> EXPORT IRNodeType StmtNode<Block>::_type_info = 36;
+template<> EXPORT IRNodeType StmtNode<IfThenElse>::_type_info = 37;
+template<> EXPORT IRNodeType StmtNode<Evaluate>::_type_info = 38;
 
 using std::string;
 const string Call::debug_to_file = "debug_to_file";
