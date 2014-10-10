@@ -15,11 +15,15 @@ struct ParameterContents {
     Expr extent_constraint[4];
     Expr stride_constraint[4];
     Expr min_value, max_value;
+    int alignment_constraint;
     ParameterContents(Type t, bool b, const std::string &n) : type(t), is_buffer(b), name(n), buffer(Buffer()), data(0) {
         // stride_constraint[0] defaults to 1. This is important for
         // dense vectorization. You can unset it by setting it to a
         // null expression. (param.set_stride(0, Expr());)
         stride_constraint[0] = 1;
+
+        // An alignment of 1 is effectively unaligned.
+        alignment_constraint = t.bytes();
     }
 };
 
@@ -135,6 +139,21 @@ Expr Parameter::stride_constraint(int dim) const {
     check_is_buffer();
     check_dim_ok(dim);
     return contents.ptr->stride_constraint[dim];
+}
+
+int Parameter::alignment_constraint() const {
+    check_is_buffer();
+    return contents.ptr->alignment_constraint;
+}
+
+void Parameter::set_alignment_constraint(int a) {
+    check_is_buffer();
+    int type_bytes = contents.ptr->type.bytes();
+    user_assert(a % type_bytes == 0)
+        << "Can't set alignment of buffer " << name()
+        << " to " << a << ". "
+        << "Alignment of buffer must be a multiple of the size of each element: " << type_bytes << "\n";
+    contents.ptr->alignment_constraint = a;
 }
 
 void Parameter::set_min_value(Expr e) {

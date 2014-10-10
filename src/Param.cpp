@@ -75,6 +75,15 @@ OutputImageParam &OutputImageParam::set_bounds(int dim, Expr min, Expr extent) {
     return set_min(dim, min).set_extent(dim, extent);
 }
 
+OutputImageParam &OutputImageParam::set_alignment(int a) {
+    param.set_alignment_constraint(a);
+    return *this;
+}
+
+int OutputImageParam::get_alignment() const {
+    return param.alignment_constraint();
+}
+
 int OutputImageParam::dimensions() const {
     return dims;
 }
@@ -119,7 +128,7 @@ Internal::Parameter OutputImageParam::parameter() const {
 }
 
 OutputImageParam::operator Argument() const {
-    return Argument(name(), true, type());
+    return Argument(name(), true, type(), get_alignment());
 }
 
 OutputImageParam::operator ExternFuncArgument() const {

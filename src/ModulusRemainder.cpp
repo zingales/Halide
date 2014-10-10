@@ -220,10 +220,20 @@ void ComputeModulusRemainder::visit(const Mul *op) {
     }
 }
 
-void ComputeModulusRemainder::visit(const Div *) {
-    // We might be able to say something about this if the numerator
-    // modulus is provably a multiple of a constant denominator, but
-    // in this case we should have simplified away the division.
+void ComputeModulusRemainder::visit(const Div *op) {
+    ModulusRemainder a = analyze(op->a);
+
+    if (const IntImm *ib = op->b.as<IntImm>()) {
+        // Treat cases like ((8x + 2) / 2) as (4x + 1).
+        if (ib->value > 0 &&
+            (a.remainder % ib->value) == 0 &&
+            (a.modulus % ib->value) == 0) {
+            remainder = a.remainder / ib->value;
+            modulus = a.modulus / ib->value;
+            return;
+        }
+    }
+
     remainder = 0;
     modulus = 1;
 }

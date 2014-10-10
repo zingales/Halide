@@ -1277,6 +1277,7 @@ Stmt add_image_checks(Stmt s, Function f, const Target &t, const FuncValueBounds
     vector<Stmt> asserts_constrained;
     vector<Stmt> asserts_proposed;
     vector<Stmt> asserts_elem_size;
+    vector<Stmt> asserts_alignment;
     vector<Stmt> buffer_rewrites;
 
     // Inject the code that conditionally returns if we're in inference mode
@@ -1364,6 +1365,20 @@ Stmt add_image_checks(Stmt s, Function f, const Target &t, const FuncValueBounds
             args.push_back(Expr(" instead of "));
             args.push_back(correct_size);
             asserts_elem_size.push_back(AssertStmt::make(elem_size == correct_size, args));
+        }
+
+        // Check the alignment of the host pointer is as promised.
+        if (param.defined()) {
+            string host_pointer_name = name + ".host";
+            Expr host_pointer = reinterpret<uint64_t>(Variable::make(Handle(), host_pointer_name));
+            int alignment = param.alignment_constraint();
+            Expr check = (host_pointer % alignment == 0);
+            vector<Expr> error = vec<Expr>(Expr("The host pointer of image " + name + " is "),
+                                           host_pointer,
+                                           Expr(", which is not aligned to a "),
+                                           alignment,
+                                           Expr("-byte boundary"));
+            asserts_alignment.push_back(AssertStmt::make(check, error));
         }
 
         if (touched.maybe_unused()) {
@@ -1645,6 +1660,11 @@ Stmt add_image_checks(Stmt s, Function f, const Target &t, const FuncValueBounds
         // Inject the code that checks for out-of-bounds access to the buffers.
         for (size_t i = asserts_required.size(); i > 0; i--) {
             s = Block::make(asserts_required[i-1], s);
+        }
+
+        // Inject the code that checks the alignment of the buffers.
+        for (size_t i = asserts_alignment.size(); i > 0; i--) {
+            s = Block::make(asserts_alignment[i-1], s);
         }
 
         // Inject the code that checks that elem_sizes are ok.

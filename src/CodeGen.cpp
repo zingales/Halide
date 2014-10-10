@@ -227,7 +227,7 @@ void CodeGen::compile(Stmt stmt, string name,
              iter++) {
 
             if (args[i].is_buffer) {
-                unpack_buffer(args[i].name, iter);
+                unpack_buffer(args[i].name, args[i].alignment, iter);
             } else {
                 sym_push(args[i].name, iter);
             }
@@ -294,7 +294,7 @@ void CodeGen::compile(Stmt stmt, string name,
         // Finally, dump it in the symbol table
         Constant *zero = ConstantInt::get(i32, 0);
         Constant *global_ptr = ConstantExpr::getInBoundsGetElementPtr(global, vec(zero));
-        unpack_buffer(buffer.name(), global_ptr);
+        unpack_buffer(buffer.name(), 32, global_ptr);
 
     }
 
@@ -548,27 +548,13 @@ bool CodeGen::sym_exists(const string &name) const {
 
 // Take an llvm Value representing a pointer to a buffer_t,
 // and populate the symbol table with its constituent parts
-void CodeGen::unpack_buffer(string name, llvm::Value *buffer) {
+void CodeGen::unpack_buffer(string name, int alignment, llvm::Value *buffer) {
     Value *host_ptr = buffer_host(buffer);
     Value *dev_ptr = buffer_dev(buffer);
 
-    // Check it's 32-byte aligned
-
-    // Disabled, because we don't currently require external
-    // allocations to be aligned.
-
-    /*
-    Value *base = builder->CreatePtrToInt(host_ptr, i64);
-    Value *check_alignment = builder->CreateAnd(base, 0x1f);
-    check_alignment = builder->CreateIsNull(check_alignment);
-
-    string error_message = "Buffer " + name + " is not 32-byte aligned";
-    create_assertion(check_alignment, error_message);
-    */
-
-    // Instead track this buffer name so that loads and stores from it
-    // don't try to be too aligned.
-    might_be_misaligned.insert(name);
+    // Remember the alignment.
+    ModulusRemainder mod_rem(alignment, 0);
+    alignment_info.push(name + ".host", mod_rem);
 
     // Make sure the buffer object itself is not null
     create_assertion(builder->CreateIsNotNull(buffer), "buffer argument " + name + " is NULL");
@@ -1150,8 +1136,6 @@ void CodeGen::add_tbaa_metadata(llvm::Instruction *inst, string buffer, Expr ind
 
 void CodeGen::visit(const Load *op) {
 
-    bool possibly_misaligned = (might_be_misaligned.find(op->name) != might_be_misaligned.end());
-
     // There are several cases. Different architectures may wish to override some.
     if (op->type.is_scalar()) {
         // Scalar loads
@@ -1166,11 +1150,15 @@ void CodeGen::visit(const Load *op) {
 
         bool internal = !op->image.defined() && !op->param.defined();
 
-        if (ramp && internal) {
-            // If it's an internal allocation, we can boost the
-            // alignment using the results of the modulus remainder
-            // analysis
-            ModulusRemainder mod_rem = modulus_remainder(ramp->base);
+        if (ramp) {
+            // Boost the alignment using the results of the modulus
+            // remainder analysis.
+
+            // Make a dummy expr representing the alignment of the
+            // host pointer. If it has a known alignment, it'll be in
+            // the alignment_info.
+            Expr host_align = Variable::make(Int(32), op->name + ".host") / alignment;
+            ModulusRemainder mod_rem = modulus_remainder(host_align + ramp->base, alignment_info);
             alignment *= gcd(gcd(mod_rem.modulus, mod_rem.remainder), 32);
             if (alignment < 0) {
                 // Can happen if ramp->base is a negative constant
@@ -1234,12 +1222,11 @@ void CodeGen::visit(const Load *op) {
             Expr base = ramp->base - ramp->width + 1;
 
             // Re-do alignment analysis for the flipped index
-            if (internal && !possibly_misaligned) {
-                alignment = op->type.bytes();
-                ModulusRemainder mod_rem = modulus_remainder(ramp->base - ramp->width + 1);
-                alignment *= gcd(gcd(mod_rem.modulus, mod_rem.remainder), 32);
-                if (alignment < 0) alignment = -alignment;
-            }
+            alignment = op->type.bytes();
+            Expr host_align = Variable::make(Int(32), op->name + ".host") / alignment;
+            ModulusRemainder mod_rem = modulus_remainder(host_align + ramp->base - ramp->width + 1, alignment_info);
+            alignment *= gcd(gcd(mod_rem.modulus, mod_rem.remainder), 32);
+            if (alignment < 0) alignment = -alignment;
 
             Value *ptr = codegen_buffer_pointer(op->name, op->type.element_of(), base);
             ptr = builder->CreatePointerCast(ptr, llvm_type_of(op->type)->getPointerTo());
@@ -2215,7 +2202,8 @@ void CodeGen::visit(const Call *op) {
 void CodeGen::visit(const Let *op) {
     sym_push(op->name, codegen(op->value));
     if (op->value.type() == Int(32)) {
-        alignment_info.push(op->name, modulus_remainder(op->value, alignment_info));
+        ModulusRemainder mod_rem = modulus_remainder(op->value, alignment_info);
+        alignment_info.push(op->name, mod_rem);
     }
     value = codegen(op->body);
     if (op->value.type() == Int(32)) {
@@ -2228,7 +2216,8 @@ void CodeGen::visit(const LetStmt *op) {
     sym_push(op->name, codegen(op->value));
 
     if (op->value.type() == Int(32)) {
-        alignment_info.push(op->name, modulus_remainder(op->value, alignment_info));
+        ModulusRemainder mod_rem = modulus_remainder(op->value, alignment_info);
+        alignment_info.push(op->name, mod_rem);
     }
     codegen(op->body);
     if (op->value.type() == Int(32)) {
@@ -2472,7 +2461,7 @@ void CodeGen::visit(const For *op) {
 void CodeGen::visit(const Store *op) {
     Value *val = codegen(op->value);
     Halide::Type value_type = op->value.type();
-    bool possibly_misaligned = (might_be_misaligned.find(op->name) != might_be_misaligned.end());
+
     // Scalar
     if (value_type.is_scalar()) {
         Value *ptr = codegen_buffer_pointer(op->name, value_type, op->index);
@@ -2484,20 +2473,12 @@ void CodeGen::visit(const Store *op) {
         if (ramp && is_one(ramp->stride)) {
 
             // Boost the alignment if possible
-            ModulusRemainder mod_rem = modulus_remainder(ramp->base, alignment_info);
-            while ((mod_rem.remainder & 1) == 0 &&
-                   (mod_rem.modulus & 1) == 0 &&
-                   alignment < 256) {
-                mod_rem.modulus /= 2;
-                mod_rem.remainder /= 2;
-                alignment *= 2;
-            }
+            Expr host_align = Variable::make(Int(32), op->name + ".host") / alignment;
+            ModulusRemainder mod_rem = modulus_remainder(host_align + ramp->base, alignment_info);
+            alignment *= gcd(gcd(mod_rem.modulus, mod_rem.remainder), 32);
 
             Value *ptr = codegen_buffer_pointer(op->name, value_type.element_of(), ramp->base);
             Value *ptr2 = builder->CreatePointerCast(ptr, llvm_type_of(value_type)->getPointerTo());
-            if (possibly_misaligned) {
-                alignment = op->value.type().element_of().bytes();
-            }
             StoreInst *store = builder->CreateAlignedStore(val, ptr2, alignment);
             add_tbaa_metadata(store, op->name, op->index);
         } else if (ramp) {

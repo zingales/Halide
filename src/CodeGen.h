@@ -176,7 +176,7 @@ protected:
     /** Take an llvm Value representing a pointer to a buffer_t,
      * and populate the symbol table with its constituent parts.
      */
-    void unpack_buffer(std::string name, llvm::Value *buffer);
+    void unpack_buffer(std::string name, int alignment, llvm::Value *buffer);
 
     /** Add a definition of buffer_t to the module if it isn't already there. */
     void define_buffer_t();
@@ -318,14 +318,14 @@ protected:
      * an arbitrary number of vectors.*/
     llvm::Value *interleave_vectors(Type, const std::vector<Expr>&);
 
+    /** Alignment info for Int(32) variables in scope. */
+    Scope<ModulusRemainder> alignment_info;
+
 private:
 
     /** All the values in scope at the current code location during
      * codegen. Use sym_push and sym_pop to access. */
     Scope<llvm::Value *> symbol_table;
-
-    /** Alignment info for Int(32) variables in scope. */
-    Scope<ModulusRemainder> alignment_info;
 
     /** String constants already emitted to the module. Tracked to
      * prevent emitting the same string many times. */

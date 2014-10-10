@@ -440,6 +440,16 @@ void CodeGen_C::unpack_buffer(Type t, const std::string &buffer_name) {
            << "->host);\n";
     allocations.push(buffer_name, t);
 
+    // Add buffer.host as another name for this:
+    stream << type
+           << " *"
+           << name
+           << "_host = ("
+           << type
+           << " *)("
+           << buf_name
+           << "->host);\n";
+
     stream << "const bool "
            << name
            << "_host_and_dev_are_null = ("
@@ -1271,6 +1281,7 @@ void CodeGen_C::test() {
         "\n\n"
         "extern \"C\" int test1(buffer_t *_buf_buffer, const float _alpha, const int32_t _beta, const void * __user_context) {\n"
         "int32_t *_buf = (int32_t *)(_buf_buffer->host);\n"
+        "int32_t *_buf_host = (int32_t *)(_buf_buffer->host);\n"
         "const bool _buf_host_and_dev_are_null = (_buf_buffer->host == NULL) && (_buf_buffer->dev == 0);\n"
         "(void)_buf_host_and_dev_are_null;\n"
         "const int32_t _buf_min_0 = _buf_buffer->min[0];\n"

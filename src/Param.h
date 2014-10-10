@@ -18,7 +18,7 @@ namespace Halide {
 /** A struct used to detect if a type is a pointer. If it's not a
  * pointer, then not_a_pointer<T>::type is T.  If it is a pointer,
  * then not_a_pointer<T>::type is some internal hidden type that no
- * overload should trigger on. TODO: with C++11 this can be written 
+ * overload should trigger on. TODO: with C++11 this can be written
  * more cleanly. */
 namespace Internal {
 template<typename T> struct not_a_pointer {typedef T type;};
@@ -33,12 +33,12 @@ template<typename T>
 class Param {
     /** A reference-counted handle on the internal parameter object */
     Internal::Parameter param;
-    
+
 public:
     /** Construct a scalar parameter of type T with a unique
      * auto-generated name */
     Param() : param(type_of<T>(), false, Internal::make_entity_name(this, "Halide::Param<?", 'p')) {}
-    
+
     /** Construct a scalar parameter of type T with the given name. */
     explicit Param(const std::string &n) : param(type_of<T>(), false, n) {}
 
@@ -233,6 +233,14 @@ public:
 
     /** Set the min and extent in one call. */
     EXPORT OutputImageParam &set_bounds(int dim, Expr min, Expr extent);
+
+    /** Promise that the host pointer is a multiple of the
+     * argument. Can sometimes generate better vector code. */
+    EXPORT OutputImageParam &set_alignment(int alignment);
+
+    /** Get any previously set alignment constraint. Returns the size
+     * of the element type if unset. */
+    EXPORT int get_alignment() const;
 
     /** Get the dimensionality of this image parameter */
     EXPORT int dimensions() const;

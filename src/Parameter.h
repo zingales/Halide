@@ -97,6 +97,15 @@ public:
     EXPORT Expr stride_constraint(int dim) const;
     //@}
 
+    /** Constrain the host pointer to be a multiple of the
+     * argument. Must be a multiple of the size of the element
+     * type. */
+    EXPORT void set_alignment_constraint(int a);
+
+    /** Get any alignment constraint. Defaults to the size of the
+     * element type. */
+    EXPORT int alignment_constraint() const;
+
     /** Get and set constraints for scalar parameters. These are used
      * directly by Param, so they must be exported. */
     // @{

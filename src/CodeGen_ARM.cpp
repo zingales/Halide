@@ -1291,9 +1291,9 @@ void CodeGen_ARM::visit(const Load *op) {
         // Check alignment on the base.
         Expr base = ramp->base;
         int offset = 0;
-        ModulusRemainder mod_rem = modulus_remainder(ramp->base);
 
-
+        // Shift the load base down to coalesce with other strided loads.
+        ModulusRemainder mod_rem = modulus_remainder(ramp->base, alignment_info);
         if ((mod_rem.modulus % stride->value) == 0) {
             offset = mod_rem.remainder % stride->value;
             base = simplify(base - offset);
@@ -1308,8 +1308,12 @@ void CodeGen_ARM::visit(const Load *op) {
             base = simplify(base - offset);
         }
 
+        // Now get the alignment for the actual load.
         int alignment = op->type.bytes();
-        //alignment *= gcd(gcd(mod_rem.modulus, mod_rem.remainder), 32);
+        Expr host_align = Variable::make(Int(32), op->name + ".host") / alignment;
+        mod_rem = modulus_remainder(host_align + base, alignment_info);
+        alignment *= gcd(gcd(mod_rem.modulus, mod_rem.remainder), 32);
+
         Value *align = ConstantInt::get(i32, alignment);
 
         Value *ptr = codegen_buffer_pointer(op->name, op->type.element_of(), base);

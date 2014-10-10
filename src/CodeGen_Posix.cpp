@@ -7,6 +7,7 @@
 #include "IROperator.h"
 #include "Debug.h"
 #include "IRPrinter.h"
+#include "ModulusRemainder.h"
 
 namespace Halide {
 namespace Internal {
@@ -287,6 +288,9 @@ void CodeGen_Posix::visit(const Allocate *alloc) {
                                               alloc->extents, alloc->condition);
     sym_push(alloc->name + ".host", allocation.ptr);
 
+    // Internal allocations are always 32-byte aligned
+    alignment_info.push(alloc->name + ".host", ModulusRemainder(32, 0));
+
     codegen(alloc->body);
 
     // Should have been freed
@@ -297,6 +301,7 @@ void CodeGen_Posix::visit(const Allocate *alloc) {
 void CodeGen_Posix::visit(const Free *stmt) {
     free_allocation(stmt->name);
     sym_pop(stmt->name + ".host");
+    alignment_info.pop(stmt->name + ".host");
 }
 
 void CodeGen_Posix::prepare_for_early_exit() {

@@ -32,13 +32,17 @@ struct Argument {
     bool read;
     bool write;
 
-    /** If this is a scalar parameter, then this is its type */
+    /** If this is a scalar parameter, then this is its type. */
     Type type;
 
+    /** If this is a buffer parameter, then this is the alignment of
+     * its host pointer. */
+    int alignment;
+
     Argument() : is_buffer(false) {}
-    Argument(const std::string &_name, bool _is_buffer, Type _type) :
-        name(_name), is_buffer(_is_buffer), type(_type) {
-        read = write = is_buffer;
+    Argument(const std::string &_name, bool _is_buffer, Type _type, int _alignment = 1) :
+        name(_name), is_buffer(_is_buffer), read(_is_buffer),
+        write(_is_buffer), type(_type), alignment(_alignment) {
     }
 };
 }
