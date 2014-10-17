@@ -15,7 +15,7 @@ void OutputImageParam::add_implicit_args_if_placeholder(std::vector<Expr> &args,
         *placeholder_seen = true;
 
         // The + 1 in the conditional is because one provided argument is an placeholder
-        for (int i = 0; i < (dims - total_args + 1); i++) {
+        for (int i = 0; i < (dimensions() - total_args + 1); i++) {
             args.push_back(Var::implicit(i));
         }
     } else {
@@ -23,8 +23,8 @@ void OutputImageParam::add_implicit_args_if_placeholder(std::vector<Expr> &args,
     }
 }
 
-OutputImageParam::OutputImageParam(const Internal::Parameter &p, int d) :
-    param(p), dims(d) {}
+OutputImageParam::OutputImageParam(const Internal::Parameter &p) :
+    param(p) {}
 
 const std::string &OutputImageParam::name() const {
     return param.name();
@@ -85,41 +85,41 @@ int OutputImageParam::get_alignment() const {
 }
 
 int OutputImageParam::dimensions() const {
-    return dims;
+    return param.dimensions();
 }
 
 Expr OutputImageParam::left() const {
-    user_assert(dims > 0) << "Can't ask for the left of a zero-dimensional image\n";
+    user_assert(dimensions() > 0) << "Can't ask for the left of a zero-dimensional image\n";
     return min(0);
 }
 
 Expr OutputImageParam::right() const {
-    user_assert(dims > 0) << "Can't ask for the right of a zero-dimensional image\n";
+    user_assert(dimensions() > 0) << "Can't ask for the right of a zero-dimensional image\n";
     return Internal::Add::make(min(0), Internal::Sub::make(extent(0), 1));
 }
 
 Expr OutputImageParam::top() const {
-    user_assert(dims > 1) << "Can't ask for the top of a zero- or one-dimensional image\n";
+    user_assert(dimensions() > 1) << "Can't ask for the top of a zero- or one-dimensional image\n";
     return min(1);
 }
 
 Expr OutputImageParam::bottom() const {
-    user_assert(dims > 1) << "Can't ask for the bottom of a zero- or one-dimensional image\n";
+    user_assert(dimensions() > 1) << "Can't ask for the bottom of a zero- or one-dimensional image\n";
     return Internal::Add::make(min(1), Internal::Sub::make(extent(1), 1));
 }
 
 Expr OutputImageParam::width() const {
-    user_assert(dims > 0) << "Can't ask for the width of a zero-dimensional image\n";
+    user_assert(dimensions() > 0) << "Can't ask for the width of a zero-dimensional image\n";
     return extent(0);
 }
 
 Expr OutputImageParam::height() const {
-    user_assert(dims > 1) << "Can't ask for the height of a zero or one-dimensional image\n";
+    user_assert(dimensions() > 1) << "Can't ask for the height of a zero or one-dimensional image\n";
     return extent(1);
 }
 
 Expr OutputImageParam::channels() const {
-    user_assert(dims > 2) << "Can't ask for the channels of an image with fewer than three dimensions\n";
+    user_assert(dimensions() > 2) << "Can't ask for the channels of an image with fewer than three dimensions\n";
     return extent(2);
 }
 
@@ -136,10 +136,10 @@ OutputImageParam::operator ExternFuncArgument() const {
 }
 
 ImageParam::ImageParam(Type t, int d) :
-    OutputImageParam(Internal::Parameter(t, true, Internal::make_entity_name(this, "Halide::ImageParam", 'p')), d) {}
+    OutputImageParam(Internal::Parameter(t, true, d, Internal::make_entity_name(this, "Halide::ImageParam", 'p'))) {}
 
 ImageParam::ImageParam(Type t, int d, const std::string &n) :
-    OutputImageParam(Internal::Parameter(t, true, n), d) {
+    OutputImageParam(Internal::Parameter(t, true, d, n, /* is_explicit_name */ true)) {
     // Discourage future Funcs from having the same name
     Internal::unique_name(n);
 }
@@ -160,9 +160,9 @@ Buffer ImageParam::get() const {
 }
 
 Expr ImageParam::operator()() const {
-    user_assert(dims == 0)
+    user_assert(dimensions() == 0)
         << "Zero-argument access to Buffer " << name()
-        << ", which has " << dims << "dimensions.\n";
+        << ", which has " << dimensions() << "dimensions.\n";
     std::vector<Expr> args;
     return Internal::Call::make(param, args);
 }
@@ -172,7 +172,7 @@ Expr ImageParam::operator()(Expr x) const {
     bool placeholder_seen = false;
     add_implicit_args_if_placeholder(args, x, 1, &placeholder_seen);
 
-    Internal::check_call_arg_types(name(), &args, dims);
+    Internal::check_call_arg_types(name(), &args, dimensions());
     return Internal::Call::make(param, args);
 }
 
@@ -182,7 +182,7 @@ Expr ImageParam::operator()(Expr x, Expr y) const {
     add_implicit_args_if_placeholder(args, x, 2, &placeholder_seen);
     add_implicit_args_if_placeholder(args, y, 2, &placeholder_seen);
 
-    Internal::check_call_arg_types(name(), &args, dims);
+    Internal::check_call_arg_types(name(), &args, dimensions());
     return Internal::Call::make(param, args);
 }
 
@@ -193,7 +193,7 @@ Expr ImageParam::operator()(Expr x, Expr y, Expr z) const {
     add_implicit_args_if_placeholder(args, y, 3, &placeholder_seen);
     add_implicit_args_if_placeholder(args, z, 3, &placeholder_seen);
 
-    Internal::check_call_arg_types(name(), &args, dims);
+    Internal::check_call_arg_types(name(), &args, dimensions());
     return Internal::Call::make(param, args);
 }
 
@@ -205,7 +205,7 @@ Expr ImageParam::operator()(Expr x, Expr y, Expr z, Expr w) const {
     add_implicit_args_if_placeholder(args, z, 4, &placeholder_seen);
     add_implicit_args_if_placeholder(args, w, 4, &placeholder_seen);
 
-    Internal::check_call_arg_types(name(), &args, dims);
+    Internal::check_call_arg_types(name(), &args, dimensions());
     return Internal::Call::make(param, args);
 }
 
@@ -217,7 +217,7 @@ Expr ImageParam::operator()(std::vector<Expr> args_passed) const {
                                          args_passed.size(), &placeholder_seen);
     }
 
-    Internal::check_call_arg_types(name(), &args, dims);
+    Internal::check_call_arg_types(name(), &args, dimensions());
     return Internal::Call::make(param, args);
 }
 
@@ -229,7 +229,7 @@ Expr ImageParam::operator()(std::vector<Var> args_passed) const {
                                          args_passed.size(), &placeholder_seen);
     }
 
-    Internal::check_call_arg_types(name(), &args, dims);
+    Internal::check_call_arg_types(name(), &args, dimensions());
     return Internal::Call::make(param, args);
 }
 
