@@ -1853,8 +1853,8 @@ private:
     void include_parameter(Internal::Parameter p) {
         if (!p.defined()) return;
         if (already_have(p.name())) return;
-        arg_types.push_back(Argument(p.name(), p.is_buffer(), p.type()));
         if (p.is_buffer()) {
+            arg_types.push_back(Argument(p.name(), p.is_buffer(), p.type(), p.alignment_constraint()));
             Buffer b = p.get_buffer();
             int idx = (int)arg_values.size();
             image_param_args.push_back(make_pair(idx, p));
@@ -1864,6 +1864,7 @@ private:
                 arg_values.push_back(NULL);
             }
         } else {
+            arg_types.push_back(Argument(p.name(), p.is_buffer(), p.type()));
             arg_values.push_back(p.get_scalar_address());
         }
     }
