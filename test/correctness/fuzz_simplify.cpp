@@ -74,8 +74,10 @@ bool test_expression(Expr test, int samples) {
     Expr simplified = simplify(test);
 
     map<string, Expr> vars;
-    for (size_t i = 0; i < fuzz.vars.size(); i++) {
-        vars[fuzz.vars[i].as<Variable>()->name] = Expr();
+    for (size_t i = 0; i < fuzz.leafs.size(); i++) {
+        if (const Variable *var = fuzz.leafs[i].as<Variable>()) {
+            vars[var->name] = Expr();
+        }
     }
 
     for (int i = 0; i < samples; i++) {

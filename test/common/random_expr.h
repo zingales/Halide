@@ -8,12 +8,12 @@ namespace Halide {
 
 class RandomExprGenerator {
 public:
-    std::vector<Expr> vars;
+    std::vector<Expr> leafs;
     std::vector<Type> types;
 
     RandomExprGenerator(int var_count = 5) {
         for (int i = 0; i < var_count; i++) {
-            vars.push_back(Internal::Variable::make(Int(0), std::string(1, 'a' + i)));
+            leafs.push_back(Internal::Variable::make(Int(0), std::string(1, 'a' + i)));
         }
 
         // Default behavior is to generate all the typical integer types
@@ -25,10 +25,6 @@ public:
         types.push_back(Int(8));
         types.push_back(Int(16));
         types.push_back(Int(32));
-    }
-
-    Expr random_var() {
-        return vars[rand()%vars.size()];
     }
 
     Type random_type(int width) {
@@ -44,9 +40,9 @@ public:
             overflow_undef = true;
         }
         if (T.is_scalar()) {
-            int var = rand() % vars.size() + 1;
-            if (!imm_only && var < vars.size()) {
-                return cast(T, random_var());
+            int var = rand() % leafs.size() + 1;
+            if (!imm_only && var < leafs.size()) {
+                return cast(T, leafs[var]);
             } else {
                 if (overflow_undef) {
                     // For Int(32), we don't care about correctness during
