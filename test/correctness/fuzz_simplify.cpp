@@ -9,13 +9,13 @@ using namespace Halide;
 using namespace Halide::Internal;
 
 // Generate expressions with 5 variables.
-RandomExprGenerator fuzz(5);
-
 Expr a(Variable::make(Int(0), "a"));
 Expr b(Variable::make(Int(0), "b"));
 Expr c(Variable::make(Int(0), "c"));
 Expr d(Variable::make(Int(0), "d"));
 Expr e(Variable::make(Int(0), "e"));
+
+RandomExprGenerator fuzz(a, b, c, d, e);
 
 Expr ramp(Expr b, Expr s, int w) { return Ramp::make(b, s, w); }
 Expr x1(Expr x) { return Broadcast::make(x, 2); }

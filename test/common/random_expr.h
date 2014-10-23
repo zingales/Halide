@@ -11,10 +11,12 @@ public:
     std::vector<Expr> leafs;
     std::vector<Type> types;
 
-    RandomExprGenerator(int var_count = 5) {
-        for (int i = 0; i < var_count; i++) {
-            leafs.push_back(Internal::Variable::make(Int(0), std::string(1, 'a' + i)));
-        }
+    RandomExprGenerator(Expr a = Expr(), Expr b = Expr(), Expr c = Expr(), Expr d = Expr(), Expr e = Expr()) {
+        if (a.defined()) leafs.push_back(a);
+        if (b.defined()) leafs.push_back(b);
+        if (c.defined()) leafs.push_back(c);
+        if (d.defined()) leafs.push_back(d);
+        if (e.defined()) leafs.push_back(e);
 
         // Default behavior is to generate all the typical integer types
         // less than 32 bit.
@@ -90,8 +92,6 @@ public:
             Internal::Mul::make,
             Internal::Min::make,
             Internal::Max::make,
-            Internal::Div::make,
-            Internal::Mod::make,
         };
 
         static make_bin_op_fn make_bool_bin_op[] = {
@@ -109,7 +109,7 @@ public:
 
         const int bin_op_count = sizeof(make_bin_op) / sizeof(make_bin_op[0]);
         const int bool_bin_op_count = sizeof(make_bool_bin_op) / sizeof(make_bool_bin_op[0]);
-        const int op_count = bin_op_count + bool_bin_op_count + 5;
+        const int op_count = bin_op_count + bool_bin_op_count + 8;
 
         int op = rand() % op_count;
         switch(op) {
@@ -153,15 +153,26 @@ public:
             } while (subT == T || (subT.is_int() && subT.bits == 32));
             return Internal::Cast::make(T, random_expr(subT, depth, overflow_undef));
 
+        case 7:
+        case 8:
         default:
             make_bin_op_fn maker;
             if (T.is_bool()) {
                 maker = make_bool_bin_op[op%bool_bin_op_count];
             } else {
-                maker = make_bin_op[op%bin_op_count];
+                if (op == 7) {
+                    maker = Internal::Div::make;
+                } else if (op == 8) {
+                    maker = Internal::Mod::make;
+                } else {
+                    maker = make_bin_op[op%bin_op_count];
+                }
             }
             Expr a = random_expr(T, depth, overflow_undef);
-            Expr b = random_expr(T, depth, overflow_undef);
+            Expr b;
+            do {
+                b = random_expr(T, depth, overflow_undef);
+            } while ((op == 7 || op == 8) && is_zero(simplify(b)));
             return maker(a, b);
         }
         // If we got here, try again.
