@@ -42,7 +42,7 @@ public:
             overflow_undef = true;
         }
         if (T.is_scalar()) {
-            int var = rand() % leafs.size() + 1;
+            int var = rand() % (leafs.size() + 1);
             if (!imm_only && var < leafs.size()) {
                 return cast(T, leafs[var]);
             } else {
@@ -92,6 +92,8 @@ public:
             Internal::Mul::make,
             Internal::Min::make,
             Internal::Max::make,
+            Internal::Div::make,
+            Internal::Mod::make,
         };
 
         static make_bin_op_fn make_bool_bin_op[] = {
@@ -109,7 +111,7 @@ public:
 
         const int bin_op_count = sizeof(make_bin_op) / sizeof(make_bin_op[0]);
         const int bool_bin_op_count = sizeof(make_bool_bin_op) / sizeof(make_bool_bin_op[0]);
-        const int op_count = bin_op_count + bool_bin_op_count + 8;
+        const int op_count = bin_op_count + bool_bin_op_count + 6;
 
         int op = rand() % op_count;
         switch(op) {
@@ -153,26 +155,15 @@ public:
             } while (subT == T || (subT.is_int() && subT.bits == 32));
             return Internal::Cast::make(T, random_expr(subT, depth, overflow_undef));
 
-        case 7:
-        case 8:
         default:
             make_bin_op_fn maker;
             if (T.is_bool()) {
                 maker = make_bool_bin_op[op%bool_bin_op_count];
             } else {
-                if (op == 7) {
-                    maker = Internal::Div::make;
-                } else if (op == 8) {
-                    maker = Internal::Mod::make;
-                } else {
-                    maker = make_bin_op[op%bin_op_count];
-                }
+                maker = make_bin_op[op%bin_op_count];
             }
             Expr a = random_expr(T, depth, overflow_undef);
-            Expr b;
-            do {
-                b = random_expr(T, depth, overflow_undef);
-            } while ((op == 7 || op == 8) && is_zero(simplify(b)));
+            Expr b = random_expr(T, depth, overflow_undef);
             return maker(a, b);
         }
         // If we got here, try again.

@@ -4,8 +4,53 @@
 #include "fuzz_codegen_common.h"
 
 using namespace Halide;
+using namespace Halide::Internal;
 
 Var x, y;
+
+int rand(int min, int extent, bool non_zero = false) {
+    int ret;
+    do {
+        ret = (rand()%extent) + min;
+    } while (non_zero && ret == 0);
+    return ret;
+}
+
+// Make sure an Expr will not generate code with undefined or crashing behavior.
+class SanitizeExpr : public IRMutator {
+    RandomExprGenerator &gen;
+public:
+    SanitizeExpr(RandomExprGenerator &gen) : gen(gen) {}
+
+    Expr non_zero(Type T) {
+        Expr e;
+        if (T.width == 1) {
+            if (rand() % 2 == 0) {
+                // We gaurantee that the first leaf is non-zero.
+                e = cast(T, gen.leafs[0]);
+            } else {
+                e = cast(T, rand(-128, 256, true));
+            }
+        } else {
+            e = non_zero(T.element_of());
+            e = Broadcast::make(e, T.width);
+        }
+
+        return e;
+    }
+
+    void visit(const Div *op) {
+        expr = Div::make(mutate(op->a), non_zero(op->b.type()));
+    }
+
+    void visit(const Mod *op) {
+        expr = Mod::make(mutate(op->a), non_zero(op->b.type()));
+    }
+};
+
+Expr sanitize(Expr e, RandomExprGenerator &gen) {
+    return SanitizeExpr(gen).mutate(e);
+}
 
 template <typename T>
 Func random_exprs() {
@@ -13,7 +58,7 @@ Func random_exprs() {
     Image<T> params(param_count, sample_count);
     for (int i = 0; i < param_count; i++) {
         for (int j = 0; j < sample_count; j++) {
-            params(i, j) = rand() % 256 - 128;
+            params(i, j) = rand(-128, 256, i == 0);
         }
         fuzz.leafs.push_back(params(i, y));
     }
@@ -21,7 +66,7 @@ Func random_exprs() {
     Func f;
     f(x, y) = undef<T>();
     for (int i = 0; i < expr_count; i++) {
-        f(i, y) = fuzz.random_expr(type_of<T>(), 4);
+        f(i, y) = sanitize(fuzz.random_expr(type_of<T>(), 4), fuzz);
     }
 
     return f;
