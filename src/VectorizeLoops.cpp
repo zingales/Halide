@@ -371,7 +371,7 @@ class VectorizeLoops : public IRMutator {
         }
 
         Stmt scalarize(Stmt s) {
-            Stmt result;
+            std::vector<Stmt> result;
             int width = replacement.type().width;
             Expr old_replacement = replacement;
             internal_assert(!scalarized);
@@ -397,17 +397,13 @@ class VectorizeLoops : public IRMutator {
                 // foo[x] -> foo[x * width + i]
                 new_stmt = mutate(new_stmt);
 
-                if (i == 0) {
-                    result = new_stmt;
-                } else {
-                    result = Block::make(result, new_stmt);
-                }
+                result.push_back(new_stmt);
             }
 
             replacement = old_replacement;
             scalarized = false;
 
-            return result;
+            return Block::make(result);
         }
 
     public:

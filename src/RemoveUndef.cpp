@@ -403,17 +403,22 @@ private:
     }
 
     void visit(const Block *op) {
-        Stmt first = mutate(op->first);
-        Stmt rest = mutate(op->rest);
-        if (!first.defined()) {
-            stmt = rest;
-        } else if (!rest.defined()) {
-            stmt = first;
-        } else if (first.same_as(op->first) &&
-                   rest.same_as(op->rest)) {
+        std::vector<Stmt> stmts;
+        bool same = true;
+        for (size_t i = 0; i < op->stmts.size(); i++) {
+            Stmt m = mutate(op->stmts[i]);
+            if (m.defined()) {
+                stmts.push_back(m);
+                same = same && m.same_as(op->stmts[i]);
+            } else {
+                same = false;
+            }
+        }
+
+        if (same) {
             stmt = op;
         } else {
-            stmt = Block::make(first, rest);
+            stmt = Block::make(stmts);
         }
     }
 

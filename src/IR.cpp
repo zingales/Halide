@@ -439,13 +439,12 @@ Stmt Realize::make(const std::string &name, const std::vector<Type> &types, cons
 }
 
 Stmt Block::make(Stmt first, Stmt rest) {
-    internal_assert(first.defined()) << "Block of undefined\n";
-    // rest is allowed to be null
+    Stmt stmts[] = { first, rest };
+    return make_it(&stmts[0], &stmts[2]);
+}
 
-    Block *node = new Block;
-    node->first = first;
-    node->rest = rest;
-    return node;
+Stmt Block::make(const std::vector<Stmt> &stmts) {
+    return make_it(stmts.begin(), stmts.end());
 }
 
 Stmt IfThenElse::make(Expr condition, Stmt then_case, Stmt else_case) {

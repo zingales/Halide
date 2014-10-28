@@ -512,8 +512,9 @@ void IRPrinter::visit(const Realize *op) {
 }
 
 void IRPrinter::visit(const Block *op) {
-    print(op->first);
-    if (op->rest.defined()) print(op->rest);
+    for (size_t i = 0; i < op->stmts.size(); i++) {
+        print(op->stmts[i]);
+    }
 }
 
 void IRPrinter::visit(const IfThenElse *op) {

@@ -199,9 +199,10 @@ void IRVisitor::visit(const Realize *op) {
 }
 
 void IRVisitor::visit(const Block *op) {
-    op->first.accept(this);
-    if (op->rest.defined()) {
-        op->rest.accept(this);
+    for (size_t i = 0; i < op->stmts.size(); i++) {
+        if (op->stmts[i].defined()) {
+            op->stmts[i].accept(this);
+        }
     }
 }
 
@@ -418,8 +419,11 @@ void IRGraphVisitor::visit(const Realize *op) {
 }
 
 void IRGraphVisitor::visit(const Block *op) {
-    include(op->first);
-    if (op->rest.defined()) include(op->rest);
+    for (size_t i = 0; i < op->stmts.size(); i++) {
+        if (op->stmts[i].defined()) {
+            include(op->stmts[i]);
+        }
+    }
 }
 
 void IRGraphVisitor::visit(const IfThenElse *op) {

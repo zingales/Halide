@@ -279,13 +279,16 @@ void IRMutator::visit(const Realize *op) {
 }
 
 void IRMutator::visit(const Block *op) {
-    Stmt first = mutate(op->first);
-    Stmt rest = mutate(op->rest);
-    if (first.same_as(op->first) &&
-        rest.same_as(op->rest)) {
+    std::vector<Stmt> stmts(op->stmts.size());
+    bool same = true;
+    for (size_t i = 0; i < stmts.size(); i++) {
+        stmts[i] = mutate(op->stmts[i]);
+        same = same && stmts[i].same_as(op->stmts[i]);
+    }
+    if (same) {
         stmt = op;
     } else {
-        stmt = Block::make(first, rest);
+        stmt = Block::make(stmts);
     }
 }
 

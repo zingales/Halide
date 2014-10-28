@@ -80,38 +80,38 @@ private:
     }
 
     void visit(const Block *op) {
-        const LetStmt *let = op->first.as<LetStmt>();
-        const Store   *store = op->first.as<Store>();
+        std::vector<Stmt> stmts;
 
-        if (let) {
-            ContainsLoad let_has_load(store_name);
-            let->value.accept(&let_has_load);
-            if (let_has_load) {
-                stmt = op;
-                return;
-            }
+        for(size_t i = 0; i < op->stmts.size(); i++) {
+            const LetStmt *let = op->stmts[i].as<LetStmt>();
+            const Store   *store = op->stmts[i].as<Store>();
 
-            let_stmts.push_back(*let);
-            stmt = mutate(Block::make(let->body, op->rest));
-            return;
-        } else if (store) {
-            ContainsLoad store_has_load(store_name);
-            store->value.accept(&store_has_load);
-            if (store_has_load) {
-                stmt = op;
-                return;
-            } else if (store->name == store_name) {
-                const Ramp *r = store->index.as<Ramp>();
-
-                if (r && is_const(r->stride, store_stride)) {
-                    stores.push_back(*store);
-                    stmt = mutate(op->rest);
-                    return;
+            if (let) {
+                ContainsLoad let_has_load(store_name);
+                let->value.accept(&let_has_load);
+                if (!let_has_load) {
+                    let_stmts.push_back(*let);
+                    stmts.push_back(let->body);
                 }
+            } else if (store) {
+                ContainsLoad store_has_load(store_name);
+                store->value.accept(&store_has_load);
+                if (!store_has_load && store->name == store_name) {
+                    const Ramp *r = store->index.as<Ramp>();
+
+                    if (r && is_const(r->stride, store_stride)) {
+                        stores.push_back(*store);
+                    } else {
+                        stmts.push_back(op->stmts[i]);
+                    }
+                } else {
+                    stmts.push_back(op->stmts[i]);
+                }
+            } else {
+                stmts.push_back(op->stmts[i]);
             }
         }
-
-        stmt = Block::make(op->first, mutate(op->rest));
+        stmt = Block::make(stmts);
     }
 };
 
@@ -496,10 +496,13 @@ class Interleaver : public IRMutator {
     }
 
     void visit(const Block *op) {
-        const LetStmt *let = op->first.as<LetStmt>();
-        const Store *store = op->first.as<Store>();
+        stmt = op;
+        return;
+/*
+        for (size_t i = 0; i < op->stmts.size(); i++) {
+            const LetStmt *let = op->stmts[i].as<LetStmt>();
+            const Store *store = op->stmts[i].as<Store>();
 
-        {
             // This isn't really a true block, so there can't be multiple
             // stores to collapse.
             if (!op->rest.defined()) goto fail;
@@ -606,6 +609,7 @@ class Interleaver : public IRMutator {
         // We didn't pass one of the tests. But maybe there are more
         // opportunities within. Continue recursively.
         stmt = Block::make(mutate(op->first), mutate(op->rest));
+*/
     }
 public:
     Interleaver() : should_deinterleave(false) {}

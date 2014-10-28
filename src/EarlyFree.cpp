@@ -99,11 +99,9 @@ private:
             IRVisitor::visit(block);
         } else {
             Stmt old_containing_stmt = containing_stmt;
-            containing_stmt = block->first;
-            block->first.accept(this);
-            if (block->rest.defined()) {
-                containing_stmt = block->rest;
-                block->rest.accept(this);
+            for (size_t i = 0; i < block->stmts.size(); i++) {
+                containing_stmt = block->stmts[i];
+                block->stmts[i].accept(this);
             }
             containing_stmt = old_containing_stmt;
         }
@@ -153,14 +151,19 @@ private:
     }
 
     void visit(const Block *block) {
-        Stmt new_rest = inject_marker(block->rest);
-        Stmt new_first = inject_marker(block->first);
+        std::vector<Stmt> stmts(block->stmts.size());
+        // TODO: This could probably be a lot smarter, the marker is only going to be injected once.
+        // the typical logic of checking if any stmts were mutated is overkill here.
+        bool same = true;
+        for (size_t i = 0; i < stmts.size(); i++) {
+            stmts[i] = inject_marker(block->stmts[i]);
+            same = same && stmts[i].same_as(block->stmts[i]);
+        }
 
-        if (new_first.same_as(block->first) &&
-            new_rest.same_as(block->rest)) {
+        if (same) {
             stmt = block;
         } else {
-            stmt = Block::make(new_first, new_rest);
+            stmt = Block::make(stmts);
         }
     }
 

@@ -457,16 +457,13 @@ class InjectBufferCopies : public IRMutator {
             return;
         }
 
-        Stmt first = mutate(op->first);
-        first = do_copies(first);
-
-        Stmt rest = op->rest;
-        if (rest.defined()) {
-            rest = mutate(rest);
-            rest = do_copies(rest);
+        std::vector<Stmt> stmts;
+        for (size_t i = 0; i < op->stmts.size(); i++) {
+            Stmt s = mutate(op->stmts[i]);
+            s = do_copies(s);
+            stmts.push_back(s);
         }
-
-        stmt = Block::make(first, rest);
+        stmt = Block::make(stmts);
     }
 
     void visit(const For *op) {

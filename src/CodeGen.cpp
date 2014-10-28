@@ -2554,8 +2554,9 @@ void CodeGen::visit(const Store *op) {
 
 
 void CodeGen::visit(const Block *op) {
-    codegen(op->first);
-    if (op->rest.defined()) codegen(op->rest);
+    for (size_t i = 0; i < op->stmts.size(); i++) {
+        codegen(op->stmts[i]);
+    }
 }
 
 void CodeGen::visit(const Realize *op) {

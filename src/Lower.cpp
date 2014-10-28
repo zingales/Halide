@@ -570,13 +570,7 @@ vector<Stmt> build_update(Function f) {
 pair<Stmt, Stmt> build_production(Function func) {
     Stmt produce = build_produce(func);
     vector<Stmt> updates = build_update(func);
-
-    // Build it from the last stage backwards.
-    Stmt merged_updates;
-    for (size_t s = updates.size(); s > 0; s--) {
-        merged_updates = Block::make(updates[s-1], merged_updates);
-    }
-    return make_pair(produce, merged_updates);
+    return make_pair(produce, Block::make(updates));
 }
 
 // A schedule may include explicit bounds on some dimension. This

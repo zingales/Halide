@@ -561,9 +561,42 @@ struct Realize : public StmtNode<Realize> {
 /** A sequence of statements to be executed in-order. 'rest' may be
  * NULL. Used rest.defined() to find out. */
 struct Block : public StmtNode<Block> {
-    Stmt first, rest;
+    std::vector<Stmt> stmts;
 
     EXPORT static Stmt make(Stmt first, Stmt rest);
+    EXPORT static Stmt make(const std::vector<Stmt> &stmts);
+    template <typename It>
+    static Stmt make_it(It begin, It end) {
+        if (begin == end) {
+            return Stmt();
+        }
+
+        Block *node = new Block;
+        for (It i = begin; i != end; i++) {
+            Stmt si = *i;
+            if (!si.defined()) {
+                continue;
+            }
+
+            const Block *ib = si.as<Block>();
+            if (ib) {
+                for (size_t j = 0; j < ib->stmts.size(); j++) {
+                    node->stmts.push_back(ib->stmts[j]);
+                }
+            } else {
+                node->stmts.push_back(si);
+            }
+        }
+        if (node->stmts.size() == 0) {
+            return Stmt();
+        } else if (node->stmts.size() == 1) {
+            Stmt ret = node->stmts.front();
+            delete node;
+            return ret;
+        } else {
+            return node;
+        }
+    }
 };
 
 /** An if-then-else block. 'else' may be NULL. */

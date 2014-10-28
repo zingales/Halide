@@ -1,6 +1,7 @@
 #include <iostream>
 #include <algorithm>
 #include <cmath>
+#include <list>
 #include <stdio.h>
 
 #include "Simplify.h"
@@ -2212,49 +2213,56 @@ private:
     }
 
     void visit(const Block *op) {
-        Stmt first = mutate(op->first);
-
-        if (!op->rest.defined()) {
-            stmt = first;
-        } else {
-            Stmt rest = mutate(op->rest);
-
-            // Check if both halves start with a let statement.
-            const LetStmt *let_first = first.as<LetStmt>();
-            const LetStmt *let_rest = rest.as<LetStmt>();
-            const IfThenElse *if_first = first.as<IfThenElse>();
-            const IfThenElse *if_rest = rest.as<IfThenElse>();
-
-            // Check if first is a no-op.
-            const AssertStmt *noop = first.as<AssertStmt>();
+        std::list<Stmt> stmts;
+        for (size_t i = 0; i < op->stmts.size(); i++) {
+            Stmt s = mutate(op->stmts[i]);
+            // Skip trivial asserts.
+            const AssertStmt *noop = s.as<AssertStmt>();
             if (noop && is_const(noop->condition, 1)) {
-                stmt = rest;
-            } else if (let_first && let_rest &&
-                       equal(let_first->value, let_rest->value)) {
+                continue;
+            }
+            stmts.push_back(s);
+        }
 
-                // Do both first and rest start with the same let statement (occurs when unrolling).
-                Stmt new_block = mutate(Block::make(let_first->body, let_rest->body));
+        // Try to find consecutive redundant let and if statements.
+        std::list<Stmt>::iterator i0 = stmts.begin();
+        std::list<Stmt>::iterator i1 = i0;
+        i1++;
+        for (; i1 != stmts.end(); i1++) {
+            const LetStmt *let0 = i0->as<LetStmt>();
+            const LetStmt *let1 = i1->as<LetStmt>();
+            const IfThenElse *if0 = i0->as<IfThenElse>();
+            const IfThenElse *if1 = i1->as<IfThenElse>();
+
+            if (let0 && let1 && equal(let0->value, let1->value)) {
+                // Do both let bodies with the same let statement (occurs when unrolling).
+                Stmt new_block = mutate(Block::make(let0->body, let1->body));
 
                 // We're just going to use the first name, so if the
                 // second name is different we need to rewrite it.
-                if (let_rest->name != let_first->name) {
-                    new_block = substitute(let_rest->name,
-                                           Variable::make(let_first->value.type(), let_first->name),
+                if (let1->name != let0->name) {
+                    new_block = substitute(let1->name,
+                                           Variable::make(let0->value.type(), let0->name),
                                            new_block);
                 }
 
-                stmt = LetStmt::make(let_first->name, let_first->value, new_block);
-            } else if (if_first && if_rest && equal(if_first->condition, if_rest->condition)) {
-                stmt = IfThenElse::make(if_first->condition,
-                                        mutate(Block::make(if_first->then_case, if_rest->then_case)),
-                                        mutate(Block::make(if_first->else_case, if_rest->else_case)));
-            } else if (op->first.same_as(first) && op->rest.same_as(rest)) {
-                stmt = op;
+                *i0 = LetStmt::make(let0->name, let0->value, new_block);
+                stmts.erase(i1);
+                // Run on i0 again.
+                i1 = i0;
+            } else if (if0 && if1 && equal(if0->condition, if1->condition)) {
+                *i0 = IfThenElse::make(if0->condition,
+                                       mutate(Block::make(if0->then_case, if1->then_case)),
+                                       mutate(Block::make(if0->else_case, if1->else_case)));
+                stmts.erase(i1);
+                // Run on i0 again.
+                i1 = i0;
             } else {
-                stmt = Block::make(first, rest);
+                i0 = i1;
             }
-
         }
+
+        stmt = Block::make_it(stmts.begin(), stmts.end());
     }
 };
 

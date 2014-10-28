@@ -115,9 +115,12 @@ Stmt debug_to_file(Stmt s, string output, const map<string, Function> &env) {
     if (const Realize *r = s.as<Realize>()) {
         s = r->body;
     } else if (const Block *b = s.as<Block>()) {
-        const Realize *r = b->rest.as<Realize>();
+        const Realize *r = b->stmts.back().as<Realize>();
         internal_assert(r);
-        s = Block::make(b->first, r->body);
+        std::vector<Stmt> stmts(b->stmts);
+        stmts.pop_back();
+        stmts.push_back(r->body);
+        s = Block::make(stmts);
     } else {
         internal_error << "Could not unwrap stmt after debug_to_file\n";
     }

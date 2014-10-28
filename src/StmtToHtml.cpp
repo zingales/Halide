@@ -493,8 +493,9 @@ public:
     }
     void visit(const Block *op) {
         stream << open_div("Block");
-        print(op->first);
-        if (op->rest.defined()) print(op->rest);
+        for (size_t i = 0; i < op->stmts.size(); i++) {
+            print(op->stmts[i]);
+        }
         stream << close_div();
     }
     void visit(const IfThenElse *op) {

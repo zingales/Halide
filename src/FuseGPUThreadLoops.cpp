@@ -60,10 +60,14 @@ class InjectThreadBarriers : public IRMutator {
     }
 
     void visit(const Block *op) {
-        if (!in_threads && op->rest.defined()) {
-            Stmt first = mutate(op->first);
-            Stmt rest = mutate(op->rest);
-            stmt = Block::make(Block::make(first, barrier()), rest);
+        if (!in_threads) {
+            std::vector<Stmt> stmts;
+            stmts.push_back(mutate(op->stmts.front()));
+            for (size_t i = 1; i < op->stmts.size(); i++) {
+                stmts.push_back(barrier());
+                stmts.push_back(mutate(op->stmts[i]));
+            }
+            stmt = Block::make(stmts);
         } else {
             IRMutator::visit(op);
         }
@@ -178,18 +182,16 @@ class NormalizeDimensionality : public IRMutator {
     }
 
     void visit(const Block *op) {
-        Stmt first = wrap(op->first);
-
-        Stmt rest;
-        if (op->rest.defined()) {
-            rest = wrap(op->rest);
+        std::vector<Stmt> stmts(op->stmts.size());
+        bool same = true;
+        for (size_t i = 0; i < op->stmts.size(); i++) {
+            stmts[i] = wrap(op->stmts[i]);
+            same = same && stmts[i].same_as(op->stmts[i]);
         }
-
-        if (first.same_as(op->first) &&
-            rest.same_as(op->rest)) {
+        if (same) {
             stmt = op;
         } else {
-            stmt = Block::make(first, rest);
+            stmt = Block::make(stmts);
         }
     }
 
