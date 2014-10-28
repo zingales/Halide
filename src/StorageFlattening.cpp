@@ -228,7 +228,7 @@ private:
         vector<ProvideValue> values;
         flatten_provide_values(values, provide);
 
-        Stmt result;
+        std::vector<Stmt> stores;
         for (size_t i = 0; i < values.size(); i++) {
             const ProvideValue &cv = values[i];
 
@@ -237,12 +237,10 @@ private:
             Expr var = Variable::make(cv.value.type(), cv.name + ".value");
             Stmt store = Store::make(cv.name, var, idx);
 
-            if (result.defined()) {
-                result = Block::make(result, store);
-            } else {
-                result = store;
-            }
+            stores.push_back(store);
         }
+
+        Stmt result = Block::make(stores);
 
         for (size_t i = values.size(); i > 0; i--) {
             const ProvideValue &cv = values[i-1];
@@ -256,7 +254,7 @@ private:
         vector<ProvideValue> values;
         flatten_provide_values(values, provide);
 
-        Stmt result;
+        std::vector<Stmt> result;
         for (size_t i = 0; i < values.size(); i++) {
             const ProvideValue &cv = values[i];
 
@@ -264,13 +262,9 @@ private:
                                            provide->name != output));
             Stmt store = Store::make(cv.name, cv.value, idx);
 
-            if (result.defined()) {
-                result = Block::make(result, store);
-            } else {
-                result = store;
-            }
+            result.push_back(store);
         }
-        return result;
+        return Block::make(result);
     }
 
     void visit(const Provide *provide) {

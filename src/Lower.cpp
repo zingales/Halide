@@ -577,6 +577,9 @@ pair<Stmt, Stmt> build_production(Function func) {
 // injects assertions that check that those bounds are sufficiently
 // large to cover the inferred bounds required.
 Stmt inject_explicit_bounds(Stmt body, Function func) {
+
+    std::vector<Stmt> result;
+
     const Schedule &s = func.schedule();
     for (size_t stage = 0; stage <= func.updates().size(); stage++) {
         for (size_t i = 0; i < s.bounds().size(); i++) {
@@ -599,11 +602,16 @@ Stmt inject_explicit_bounds(Stmt body, Function func) {
             //body = LetStmt::make(prefix + ".min", min_val, body);
             //body = LetStmt::make(prefix + ".max", max_val, body);
 
-            body = Block::make(AssertStmt::make(check, error_msg), body);
+            result.push_back(AssertStmt::make(check, error_msg));
+
+
+//            body = Block::make(AssertStmt::make(check, error_msg), body);
         }
     }
 
-    return body;
+    result.push_back(body);
+
+    return Block::make(result);
 }
 
 class IsUsedInStmt : public IRVisitor {
@@ -1212,14 +1220,17 @@ Stmt add_parameter_checks(Stmt s, const Target &t) {
         asserts.clear();
     }
 
+    std::vector<Stmt> result;
     // Inject the assert statements
     for (size_t i = 0; i < asserts.size(); i++) {
         std::ostringstream oss;
         oss << "Static bounds constraint on parameter violated: " << asserts[i];
-        s = Block::make(AssertStmt::make(asserts[i], oss.str()), s);
+        result.push_back(AssertStmt::make(asserts[i], oss.str()));
     }
 
-    return s;
+    result.push_back(s);
+
+    return Block::make(result);
 }
 
 
@@ -1646,9 +1657,7 @@ Stmt add_image_checks(Stmt s, Function f, const Target &t,
 
     // Inject the code that checks that no dimension math overflows
     if (!no_asserts) {
-        for (size_t i = dims_no_overflow_asserts.size(); i > 0; i--) {
-            s = Block::make(dims_no_overflow_asserts[i-1], s);
-        }
+        s = Block::make(Block::make(dims_no_overflow_asserts), s);
 
         // Inject the code that defines the proposed sizes.
         for (size_t i = lets_overflow.size(); i > 0; i--) {
@@ -1668,19 +1677,13 @@ Stmt add_image_checks(Stmt s, Function f, const Target &t,
 
     if (!no_asserts) {
         // Inject the code that checks the constraints are correct.
-        for (size_t i = asserts_constrained.size(); i > 0; i--) {
-            s = Block::make(asserts_constrained[i-1], s);
-        }
+        s = Block::make(Block::make(asserts_constrained), s);
 
         // Inject the code that checks for out-of-bounds access to the buffers.
-        for (size_t i = asserts_required.size(); i > 0; i--) {
-            s = Block::make(asserts_required[i-1], s);
-        }
+        s = Block::make(Block::make(asserts_required), s);
 
         // Inject the code that checks that elem_sizes are ok.
-        for (size_t i = asserts_elem_size.size(); i > 0; i--) {
-            s = Block::make(asserts_elem_size[i-1], s);
-        }
+        s = Block::make(Block::make(asserts_elem_size), s);
     }
 
     // Inject the code that returns early for inference mode.
@@ -1688,16 +1691,12 @@ Stmt add_image_checks(Stmt s, Function f, const Target &t,
         s = IfThenElse::make(!maybe_return_condition, s);
 
         // Inject the code that does the buffer rewrites for inference mode.
-        for (size_t i = buffer_rewrites.size(); i > 0; i--) {
-            s = Block::make(buffer_rewrites[i-1], s);
-        }
+        s = Block::make(Block::make(buffer_rewrites), s);
     }
 
     if (!no_asserts) {
         // Inject the code that checks the proposed sizes still pass the bounds checks
-        for (size_t i = asserts_proposed.size(); i > 0; i--) {
-            s = Block::make(asserts_proposed[i-1], s);
-        }
+        s = Block::make(Block::make(asserts_proposed), s);
     }
 
     // Inject the code that defines the proposed sizes.

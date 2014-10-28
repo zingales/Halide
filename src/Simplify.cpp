@@ -2262,7 +2262,7 @@ private:
             }
         }
 
-        stmt = Block::make_it(stmts.begin(), stmts.end());
+        stmt = Block::make(stmts.begin(), stmts.end());
     }
 };
 

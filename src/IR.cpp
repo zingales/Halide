@@ -440,11 +440,11 @@ Stmt Realize::make(const std::string &name, const std::vector<Type> &types, cons
 
 Stmt Block::make(Stmt first, Stmt rest) {
     Stmt stmts[] = { first, rest };
-    return make_it(&stmts[0], &stmts[2]);
+    return make(&stmts[0], &stmts[2]);
 }
 
 Stmt Block::make(const std::vector<Stmt> &stmts) {
-    return make_it(stmts.begin(), stmts.end());
+    return make(stmts.begin(), stmts.end());
 }
 
 Stmt IfThenElse::make(Expr condition, Stmt then_case, Stmt else_case) {

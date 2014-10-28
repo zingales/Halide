@@ -566,7 +566,7 @@ struct Block : public StmtNode<Block> {
     EXPORT static Stmt make(Stmt first, Stmt rest);
     EXPORT static Stmt make(const std::vector<Stmt> &stmts);
     template <typename It>
-    static Stmt make_it(It begin, It end) {
+    static Stmt make(It begin, It end) {
         if (begin == end) {
             return Stmt();
         }
