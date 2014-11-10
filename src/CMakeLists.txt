@@ -247,6 +247,7 @@ set(HEADER_FILES
   IR.h
   IRMatch.h
   IRMutator.h
+  IRMultiMutator.h
   IROperator.h
   IRPrinter.h
   IRVisitor.h
@@ -302,7 +303,7 @@ set(HEADER_FILES
   StmtToHtml.h
   Memoization.h
   CodeGen_MIPS.h
-  Generator.h 
+  Generator.h
   ObjectInstanceRegistry.h
   BlockFlattening.h
   LinearSolve.h)
@@ -332,6 +333,7 @@ add_library(Halide ${HALIDE_LIBRARY_TYPE}
   CodeGen_ARM.cpp
   IR.cpp
   IRMutator.cpp
+  IRMultiMutator.cpp
   IRPrinter.cpp
   IRVisitor.cpp
   CodeGen_C.cpp
@@ -401,7 +403,7 @@ add_library(Halide ${HALIDE_LIBRARY_TYPE}
   StmtToHtml.cpp
   Memoization.cpp
   CodeGen_MIPS.cpp
-  Generator.cpp 
+  Generator.cpp
   ObjectInstanceRegistry.cpp
   BlockFlattening.cpp
   LinearSolve.cpp
