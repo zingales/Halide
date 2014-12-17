@@ -108,6 +108,7 @@ DECLARE_CPP_INITMOD(gpu_device_selection)
 DECLARE_CPP_INITMOD(cache)
 DECLARE_CPP_INITMOD(nacl_host_cpu_count)
 DECLARE_CPP_INITMOD(to_string)
+DECLARE_CPP_INITMOD(matlab)
 
 #ifdef WITH_ARM
 DECLARE_LL_INITMOD(arm)
@@ -229,6 +230,9 @@ void link_modules(std::vector<llvm::Module *> &modules) {
                        "halide_memoization_cache_lookup",
                        "halide_memoization_cache_store",
                        "halide_memoization_cache_cleanup",
+                       "halide_matlab_init",
+                       "halide_matlab_to_buffer_t",
+                       "mxGetScalar",
                        "__stack_chk_guard",
                        "__stack_chk_fail",
                        ""};
@@ -467,6 +471,9 @@ llvm::Module *get_initial_module_for_target(Target t, llvm::LLVMContext *c) {
         }
     } else {
         modules.push_back(get_initmod_nogpu(c, bits_64, debug));
+    }
+    if (t.has_feature(Target::Matlab)) {
+        modules.push_back(get_initmod_matlab(c, bits_64, debug));
     }
 
     link_modules(modules);

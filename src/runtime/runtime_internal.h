@@ -82,6 +82,9 @@ WEAK char *halide_int64_to_string(char *dst, char *end, int64_t arg, int digits)
 WEAK char *halide_uint64_to_string(char *dst, char *end, uint64_t arg, int digits);
 WEAK char *halide_pointer_to_string(char *dst, char *end, const void *arg);
 
+WEAK void halide_set_custom_print(void (*print)(void *, const char *));
+WEAK void halide_set_error_handler(void (*print)(void *, const char *));
+
 }
 
 // A convenient namespace for weak functions that are internal to the

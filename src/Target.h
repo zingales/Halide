@@ -56,6 +56,8 @@ struct Target {
 
         OpenGL,  ///< Enable the OpenGL runtime.
 
+        Matlab, ///< Enable the Matlab runtime.
+
         UserContext,  ///< Generated code takes a user_context pointer as first argument
 
         FeatureEnd

@@ -107,7 +107,8 @@ set(RUNTIME_CPP
   posix_print
   to_string
   cache
-  nacl_host_cpu_count)
+  nacl_host_cpu_count
+  matlab)
 set (RUNTIME_LL
   arm
   aarch64
@@ -302,14 +303,15 @@ set(HEADER_FILES
   StmtToHtml.h
   Memoization.h
   CodeGen_MIPS.h
-  Generator.h 
+  Generator.h
   ObjectInstanceRegistry.h
   BlockFlattening.h
   LinearSolve.h
   BranchVisitors.h
   LLVM_Runtime_Linker.h
   CodeGen.h
-  Output.h)
+  Output.h
+  MatlabOutput.h)
 
 file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/include")
 file(TO_NATIVE_PATH "${CMAKE_BINARY_DIR}/include/" NATIVE_INCLUDE_PATH)
@@ -405,7 +407,7 @@ add_library(Halide ${HALIDE_LIBRARY_TYPE}
   StmtToHtml.cpp
   Memoization.cpp
   CodeGen_MIPS.cpp
-  Generator.cpp 
+  Generator.cpp
   ObjectInstanceRegistry.cpp
   BlockFlattening.cpp
   LinearSolve.cpp
@@ -413,6 +415,7 @@ add_library(Halide ${HALIDE_LIBRARY_TYPE}
   LLVM_Runtime_Linker.cpp
   CodeGen.cpp
   Output.cpp
+  MatlabOutput.cpp
   "${CMAKE_BINARY_DIR}/include/Halide.h"
   ${HEADER_FILES})
 
