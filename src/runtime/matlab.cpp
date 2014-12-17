@@ -75,21 +75,23 @@ extern "C" WEAK int halide_matlab_to_buffer_t(int n, const mxArray_ptr a, buffer
     halide_assert(NULL, buf != NULL);
     memset(buf, 0, sizeof(buffer_t));
 
-    int dims = mxGetNumberOfDimensions(a);
-    if (dims > 4) {
-        mexErrMsgIdAndTxt("Matlab:Halide", "Argument %d has %d dimensions.\n", n, dims);
+    int dim_count = mxGetNumberOfDimensions(a);
+    if (dim_count > 4) {
+        mexErrMsgIdAndTxt("Matlab:Halide", "Argument %d has %d dimensions.\n", n, dim_count);
         return -1;
     }
 
     buf->host = (uint8_t *)mxGetData(a);
     buf->elem_size = mxGetElementSize(a);
-    for (int i = 0; i < 4 && i < mxGetNumberOfDimensions(a); i++) {
-        buf->extent[i] = mxGetDimensions(a)[i];
+
+    const size_t *dims = mxGetDimensions(a);
+    for (int i = 0; i < dim_count; i++) {
+        buf->extent[i] = static_cast<int32_t>(dims[i]);
     }
 
     // Compute dense strides.
     buf->stride[0] = 1;
-    for (int i = 1; i < dims; i++) {
+    for (int i = 1; i < dim_count; i++) {
         buf->stride[i] = buf->extent[i - 1] * buf->stride[i - 1];
     }
 
