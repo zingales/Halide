@@ -11,6 +11,10 @@
 #include "IR.h"
 #include "Target.h"
 
+namespace llvm {
+class raw_fd_ostream;
+}
+
 namespace Halide {
 namespace Internal {
 
@@ -41,6 +45,10 @@ EXPORT inline RefCount &ref_count<OutputBase>(const OutputBase *o) {return o->re
 
 template<>
 EXPORT inline void destroy<OutputBase>(const OutputBase *o) {delete o;}
+
+// Create an LLVM raw_fd_ostream. This heavily depends on the LLVM
+// version, so it is more annoying that it would seem.
+llvm::raw_fd_ostream *new_raw_fd_ostream(const std::string &filename);
 
 }
 
