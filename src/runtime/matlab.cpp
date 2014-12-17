@@ -64,16 +64,20 @@ extern "C" WEAK void halide_matlab_printf(void *, const char *msg) {
 extern "C" WEAK void halide_matlab_init() {
     halide_set_custom_print(halide_matlab_printf);
     halide_set_error_handler(halide_matlab_printf);
-    mxGetScalar(NULL);
 }
 
 // Convert an mxArray to a buffer_t.
-extern "C" WEAK int halide_matlab_to_buffer_t(const mxArray_ptr a, buffer_t *buf) {
+extern "C" WEAK int halide_matlab_to_buffer_t(int n, const mxArray_ptr a, buffer_t *buf) {
+    if (a == NULL) {
+        mexErrMsgIdAndTxt("Matlab:Halide", "Argument %d is NULL.\n", n);
+        return -1;
+    }
+    halide_assert(NULL, buf != NULL);
     memset(buf, 0, sizeof(buffer_t));
 
     int dims = mxGetNumberOfDimensions(a);
     if (dims > 4) {
-        mexErrMsgIdAndTxt("Matlab:Halide", "mxArray has %d dimensions.\n", dims);
+        mexErrMsgIdAndTxt("Matlab:Halide", "Argument %d has %d dimensions.\n", n, dims);
         return -1;
     }
 
@@ -89,7 +93,7 @@ extern "C" WEAK int halide_matlab_to_buffer_t(const mxArray_ptr a, buffer_t *buf
         buf->stride[i] = buf->extent[i - 1] * buf->stride[i - 1];
     }
 
+    mxGetScalar(a);
+
     return 0;
 }
-
-

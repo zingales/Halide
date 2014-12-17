@@ -16,7 +16,7 @@ int main(int argc, char **argv) {
     std::vector<Argument> args;
     args.push_back(in);
     args.push_back(scale);
-    result.compile_to(output_matlab("mex_scale"), args, "scale_fn");
+    result.compile_to(output_matlab("mex_scale.o"), args, "scale_fn");
 
     printf("Success!\n");
 

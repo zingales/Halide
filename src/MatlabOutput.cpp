@@ -141,7 +141,7 @@ public:
                 arg = ir.CreateAlloca(buffer_t_ty);
 
                 // Call matlab_to_buffer_t with the argument.
-                Value *result = ir.CreateCall2(matlab_to_buffer_t, mx_arg, arg);
+                Value *result = ir.CreateCall3(matlab_to_buffer_t, arg_idx, mx_arg, arg);
 
                 // Check for error.
                 BasicBlock *next = BasicBlock::Create(ctx, "setup_arg", mex);
