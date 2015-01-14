@@ -128,7 +128,7 @@ int generate_filter_main(int argc, char **argv, std::ostream &cerr) {
 
 GeneratorParamBase::GeneratorParamBase(const std::string &name) : name(name) {
     ObjectInstanceRegistry::register_instance(this, 0, ObjectInstanceRegistry::GeneratorParam,
-                                              this);
+                                              this, NULL);
 }
 
 GeneratorParamBase::~GeneratorParamBase() { ObjectInstanceRegistry::unregister_instance(this); }
