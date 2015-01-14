@@ -7,8 +7,8 @@ void check(const void *var, const std::string &type,
            const std::string &correct_name,
            const std::string &correct_file, int line) {
     std::string correct_loc = correct_file + ":" + Halide::Internal::int_to_string(line);
-    std::string loc = Halide::Internal::get_source_location();
-    std::string name = Halide::Internal::get_variable_name(var, type);
+    std::string loc = Halide::Internal::Introspection::get_source_location();
+    std::string name = Halide::Internal::Introspection::get_variable_name(var, type);
 
     if (name != correct_name) {
         printf("Mispredicted name: %s vs %s\n",

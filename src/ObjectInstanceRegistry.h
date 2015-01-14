@@ -33,9 +33,18 @@ public:
     /** Add an instance to the registry. The size may be 0 for Param Kinds,
      * but not for Generator. subject_ptr is the value actually associated
      * with this instance; it is usually (but not necessarily) the same
-     * as this_ptr. Assert if this_ptr is already registered.
+     * as this_ptr. Assert if this_ptr is already registered. 
+     * 
+     * If 'this' is directly heap allocated (not a member of a
+     * heap-allocated object), and you want the introspection
+     * subsystem to know about it, set the introspection_helper
+     * argument to a pointer to a global variable with the same true
+     * type as this (a pointer to an object instance). The
+     * introspection subsystem will then assume this new object is of
+     * the matching type, which will help its members deduce their
+     * names.
      */
-    static void register_instance(void *this_ptr, size_t size, Kind kind, void *subject_ptr);
+    static void register_instance(void *this_ptr, size_t size, Kind kind, void *subject_ptr, const void *introspection_helper);
 
     /** Remove an instance from the registry. Assert if not found.
      */
@@ -55,10 +64,11 @@ private:
         void *subject_ptr;  // May be different from the this_ptr in the key
         size_t size;  // May be 0 for params
         Kind kind;
+        bool registered_for_introspection;
 
-        InstanceInfo() : subject_ptr(NULL), size(0), kind(Invalid) {}
-        InstanceInfo(size_t size, Kind kind, void *subject_ptr)
-            : subject_ptr(subject_ptr), size(size), kind(kind) {}
+        InstanceInfo() : subject_ptr(NULL), size(0), kind(Invalid), registered_for_introspection(false) {}
+        InstanceInfo(size_t size, Kind kind, void *subject_ptr, bool registered_for_introspection)
+            : subject_ptr(subject_ptr), size(size), kind(kind), registered_for_introspection(registered_for_introspection) {}
     };
 
 #if __cplusplus > 199711L || _MSC_VER >= 1800

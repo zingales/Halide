@@ -380,6 +380,15 @@ public:
     /** Build and return a Halide::Func. All Generators must override this. */
     virtual Func build() = 0;
 
+    /** Test the generator. Returns whether the test passes. The
+     * default implementation returns false, as untested code is
+     * assumed to be broken. */
+    virtual bool test() { return false; }
+
+    /** Emit help text describing what the generator does to the
+     * provided stream. By default prints the generator params and params. */
+    virtual void help(std::ostream &);
+
     /** Return a Func that calls a previously-generated instance of this Generator.
      * This is (essentially) a smart wrapper around define_extern(), but uses the
      * output types and dimensionality of the Func returned by build. It is
@@ -434,7 +443,7 @@ public:
                             const std::string &file_base_name = "", const EmitOptions &options = EmitOptions());
 
 protected:
-    EXPORT GeneratorBase(size_t size);
+    EXPORT GeneratorBase(size_t size, const void *introspection_helper);
 
 private:
     const size_t size;
@@ -490,13 +499,21 @@ private:
     void operator=(const GeneratorRegistry &) = delete;
 };
 
+// Return the address of a global with type T *. Never
+// assigned to. Used to assist the introspection framework.
+template<typename T>
+const void *get_introspection_helper() {
+    static T *introspection_helper = nullptr;
+    return &introspection_helper;
+}
+
 }  // namespace Internal
 
 template <class T> class RegisterGenerator;
 
 template <class T> class Generator : public Internal::GeneratorBase {
 public:
-    Generator() : Internal::GeneratorBase(sizeof(T)) {}
+    Generator() : Internal::GeneratorBase(sizeof(T), Internal::get_introspection_helper<T>()) {}
 private:
     friend class RegisterGenerator<T>;
     // Must wrap the static member in a static method to avoid static-member
@@ -508,6 +525,8 @@ private:
     const std::string &generator_name() const override final {
         return *generator_name_storage();
     }
+
+
 };
 
 template <class T> class RegisterGenerator {

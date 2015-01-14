@@ -180,8 +180,8 @@ std::vector<std::string> GeneratorRegistry::enumerate() {
     return result;
 }
 
-GeneratorBase::GeneratorBase(size_t size) : size(size), params_built(false) {
-    ObjectInstanceRegistry::register_instance(this, size, ObjectInstanceRegistry::Generator, this);
+GeneratorBase::GeneratorBase(size_t size, const void *introspection_helper) : size(size), params_built(false) {
+    ObjectInstanceRegistry::register_instance(this, size, ObjectInstanceRegistry::Generator, this, introspection_helper);
 }
 
 GeneratorBase::~GeneratorBase() { ObjectInstanceRegistry::unregister_instance(this); }
