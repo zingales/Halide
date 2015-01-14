@@ -123,7 +123,7 @@ int generate_filter_main(int argc, char **argv, std::ostream &cerr) {
 
     std::string output_dir = flags_info["-o"];
     if (output_dir.empty() && !run_test && !print_help) {
-        cerr << "At least one of -o, -t, or -h must be specified.\n";
+        cerr << "At least one of -o, -test, or -help must be specified.\n";
         cerr << kUsage;
         return 1;
     }
