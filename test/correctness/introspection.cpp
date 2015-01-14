@@ -72,8 +72,6 @@ int g(int x) {
 
 }
 
-
-
 int f(int x) {
     static float static_float_in_f = 0.3f;
     int y = g(x) + g(x-1);
@@ -83,6 +81,19 @@ int f(int x) {
 }
 
 }
+
+struct HeapObject {
+    float f;
+    int i;
+    struct  {
+        char c;
+        double d;
+        int i_array[20];
+    } inner;
+    HeapObject *ptr;
+};
+
+HeapObject *dummy_heap_object_ptr = NULL;
 
 int main(int argc, char **argv) {
     bool result = HalideIntrospectionCanary::test();
@@ -106,6 +117,19 @@ int main(int argc, char **argv) {
     int *on_the_heap = new int;
     check(on_the_heap, "int", "", __FILE__, __LINE__);
     delete on_the_heap;
+
+    // .. unless they're members of explicitly registered objects
+    HeapObject *obj = new HeapObject;
+    Halide::Internal::Introspection::register_heap_object(obj, sizeof(HeapObject), &dummy_heap_object_ptr);
+    check(&(obj->f), "float", "f", __FILE__, __LINE__);
+    check(&(obj->i), "int", "i", __FILE__, __LINE__);
+    check(&(obj->inner.c), "char", "inner.c", __FILE__, __LINE__);
+    check(&(obj->inner.d), "double", "inner.d", __FILE__, __LINE__);
+    check(&(obj->ptr), "HeapObject *", "ptr", __FILE__, __LINE__);
+    // TODO:
+    //check(&(obj->inner.i_array[10]), "int", "inner.i_array[10]", __FILE__, __LINE__);
+    Halide::Internal::Introspection::deregister_heap_object(obj, sizeof(HeapObject));
+    delete obj;
 
     // Make sure it works for arrays.
     float an_array[17];
