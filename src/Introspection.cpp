@@ -81,7 +81,7 @@ class DebugSections {
         uint64_t addr;
         TypeInfo *type;
         struct Member {
-            uint64_t addr;            
+            uint64_t addr;
             std::string name;
             TypeInfo *type;
             bool operator<(const Member &other) const {
@@ -303,7 +303,7 @@ public:
         size_t idx = lo;
         while (idx > 0 && global_variables[idx-1].addr == global_variables[lo].addr) {
             idx--;
-        }        
+        }
 
         return (int)idx;
     }
@@ -371,8 +371,8 @@ public:
             debug(4) << " with unknown type!\n";
             return;
         }
-        
-        internal_assert(ptr.type->type == TypeInfo::Pointer) 
+
+        internal_assert(ptr.type->type == TypeInfo::Pointer)
             << "The type of the helper object was supposed to be a pointer\n";
         internal_assert(ptr.type->members.size() == 1);
         TypeInfo *object_type = ptr.type->members[0].type;
@@ -395,6 +395,7 @@ public:
             member.addr = heap_object.addr + member_spec.stack_offset;
             if (member.type) {
                 heap_object.members.push_back(member);
+                debug(4) << member.name << " - " << (int)(member.type->type) << "\n";
             }
         }
 
@@ -421,8 +422,10 @@ public:
                     parent.type->type == TypeInfo::Const) {
                     // We're just following a type modifier. It's still the same member.
                     child.name = parent.name;
+                } else if (parent.type->type == TypeInfo::Array) {
+                    child.name = ""; // the '[index]' gets added in the query routine.
                 } else {
-                    child.name = parent.name + "." + member_spec.name;
+                    child.name = member_spec.name;
                 }
 
                 child.addr = parent.addr + member_spec.stack_offset;
@@ -451,7 +454,7 @@ public:
     }
 
     // Get the debug name of a member of a heap variable from a pointer to it
-    std::string get_heap_member_name(const void *ptr, const std::string &type_name = "") {        
+    std::string get_heap_member_name(const void *ptr, const std::string &type_name = "") {
         debug(4) << "Getting heap member name of " << ptr << "\n";
 
         if (heap_objects.empty()) {
@@ -479,17 +482,53 @@ public:
             return "";
         }
 
-        // TODO: handle array members
+
+        std::ostringstream name;
 
         // Look in the members for the appropriate offset.
         for (size_t i = 0; i < obj.members.size(); i++) {
+            TypeInfo *t = obj.members[i].type;
+
+            if (!t) continue;
+
             debug(4) << "Comparing to member " << obj.members[i].name
                      << " at address " << std::hex << obj.members[i].addr << std::dec
-                     << " with type " << obj.members[i].type->name << "\n";
+                     << " with type " << t->name
+                     << " and type type " << (int)t->type << "\n";
+
+
             if (obj.members[i].addr == addr &&
-                obj.members[i].type &&
-                type_name_match(obj.members[i].type->name, type_name)) {
-                return obj.members[i].name;
+                type_name_match(t->name, type_name)) {
+                name << obj.members[i].name;
+                return name.str();
+            }
+
+            // For arrays, we only unpacked the first element.
+            if (t->type == TypeInfo::Array) {
+                TypeInfo *elem_type = t->members[0].type;
+                uint64_t array_start_addr = obj.members[i].addr;
+                uint64_t array_end_addr = array_start_addr + t->size * elem_type->size;
+                debug(4) << "Array runs from " << std::hex << array_start_addr << " to " << array_end_addr << "\n";
+                if (elem_type && addr >= array_start_addr && addr < array_end_addr) {
+                    // Adjust the query address backwards to lie
+                    // within the first array element and remember the
+                    // array index to correct the name later.
+                    uint64_t containing_elem = (addr - array_start_addr) / elem_type->size;
+                    addr -= containing_elem * elem_type->size;
+                    debug(4) << "Query belongs to this array. Adjusting query address backwards to "
+                             << std::hex << addr << std::dec << "\n";
+                    name << obj.members[i].name << '[' << containing_elem << ']';
+                }
+            } else if (t->type == TypeInfo::Struct ||
+                       t->type == TypeInfo::Class ||
+                       t->type == TypeInfo::Primitive) {
+                // If I'm not this member, but am contained within it, incorporate its name.
+                uint64_t struct_start_addr = obj.members[i].addr;
+                uint64_t struct_end_addr = struct_start_addr + t->size;
+                debug(4) << "Struct runs from " << std::hex << struct_start_addr << " to " << struct_end_addr << "\n";
+                if (addr >= struct_start_addr && addr < struct_end_addr) {
+                    name << obj.members[i].name << '.';
+                }
             }
         }
 
@@ -1683,13 +1722,13 @@ private:
                             if (new_vars[j+k+1].name.size() &&
                                 new_vars[j].name.size()) {
                                 new_vars[j+k+1].name = new_vars[j].name + "." + new_vars[j+k+1].name;
-                            }                        
+                            }
                         }
                     }
                 }
             }
             functions[i].variables.swap(new_vars);
-            
+
             if (functions[i].variables.size()) {
                 debug(4) << "Function " << functions[i].name << ":\n";
                 for (size_t j = 0; j < functions[i].variables.size(); j++) {
