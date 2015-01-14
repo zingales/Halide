@@ -24,12 +24,12 @@ namespace Introspection {
  * same address, e.g a class instance vs its first member. */
 EXPORT std::string get_variable_name(const void *, const std::string &expected_type);
 
-/** Register an untyped heap object as a global. Derive type
- * information from an introspectable pointer to a pointer to an
- * object of the same type. */
+/** Register an untyped heap object. Derive type information from an
+ * introspectable pointer to a pointer to a global object of the same
+ * type. Not thread-safe. */
 EXPORT void register_heap_object(const void *obj, size_t size, const void *helper);
 
-/** Deregister a heap object. */
+/** Deregister a heap object. Not thread-safe. */
 EXPORT void deregister_heap_object(const void *obj, size_t size);
 
 /** Get the source location in the call stack, skipping over calls in

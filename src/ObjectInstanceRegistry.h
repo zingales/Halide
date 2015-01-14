@@ -33,18 +33,26 @@ public:
     /** Add an instance to the registry. The size may be 0 for Param Kinds,
      * but not for Generator. subject_ptr is the value actually associated
      * with this instance; it is usually (but not necessarily) the same
-     * as this_ptr. Assert if this_ptr is already registered. 
-     * 
+     * as this_ptr. Assert if this_ptr is already registered.
+     *
      * If 'this' is directly heap allocated (not a member of a
-     * heap-allocated object), and you want the introspection
-     * subsystem to know about it, set the introspection_helper
+     * heap-allocated object) and you want the introspection subsystem
+     * to know about it and its members, set the introspection_helper
      * argument to a pointer to a global variable with the same true
-     * type as this (a pointer to an object instance). The
+     * type as 'this'. For example:
+     *
+     * MyObject *obj = new MyObject;
+     * static MyObject *introspection_helper = nullptr;
+     * register_instance(obj, sizeof(MyObject), kind, obj, &introspection_helper);
+     *
+     * I.e. introspection_helper should be a pointer to a pointer to
+     * an object instance. The inner pointer can be null. The
      * introspection subsystem will then assume this new object is of
      * the matching type, which will help its members deduce their
-     * names.
+     * names on construction.
      */
-    static void register_instance(void *this_ptr, size_t size, Kind kind, void *subject_ptr, const void *introspection_helper);
+    static void register_instance(void *this_ptr, size_t size, Kind kind, void *subject_ptr,
+                                  const void *introspection_helper);
 
     /** Remove an instance from the registry. Assert if not found.
      */

@@ -499,6 +499,9 @@ private:
     void operator=(const GeneratorRegistry &) = delete;
 };
 
+}  // namespace Internal
+
+namespace {
 // Return the address of a global with type T *. Never
 // assigned to. Used to assist the introspection framework.
 template<typename T>
@@ -506,14 +509,13 @@ const void *get_introspection_helper() {
     static T *introspection_helper = nullptr;
     return &introspection_helper;
 }
-
-}  // namespace Internal
+}
 
 template <class T> class RegisterGenerator;
 
 template <class T> class Generator : public Internal::GeneratorBase {
 public:
-    Generator() : Internal::GeneratorBase(sizeof(T), Internal::get_introspection_helper<T>()) {}
+    Generator() : Internal::GeneratorBase(sizeof(T), get_introspection_helper<T>()) {}
 private:
     friend class RegisterGenerator<T>;
     // Must wrap the static member in a static method to avoid static-member
