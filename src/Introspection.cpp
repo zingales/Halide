@@ -399,7 +399,7 @@ public:
         }
 
         for (size_t i = 0; i < heap_object.members.size(); i++) {
-            HeapObject::Member &parent = heap_object.members[i];
+            HeapObject::Member parent = heap_object.members[i];
 
             // Stop at references or pointers. We could register them
             // recursively (and basically write a garbage collector
