@@ -387,7 +387,7 @@ public:
 
     /** Print out help test describing how to use this generator. By
      * default prints out the params and generator params. */
-    virtual void help(std::ostream &out);
+    EXPORT virtual void help(std::ostream &out);
 
     /** Return a Func that calls a previously-generated instance of this Generator.
      * This is (essentially) a smart wrapper around define_extern(), but uses the
@@ -419,7 +419,7 @@ public:
 
     // This is a bit of a stopgap: we need info that isn't in Argument,
     // but there's probably a better way than surfacing Internal::Parameter.
-    std::vector<Internal::Parameter> get_filter_parameters();
+    EXPORT std::vector<Internal::Parameter> get_filter_parameters();
 
     /** Given a data type, return an estimate of the "natural" vector size
      * for that data type when compiling for the current target. */
