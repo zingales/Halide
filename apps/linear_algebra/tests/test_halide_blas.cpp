@@ -207,6 +207,9 @@ struct BLASFloatTests : public BLASTestBase<float> {
         RUN_TEST(sgemv_notrans);
         RUN_TEST(sgemv_trans);
         RUN_TEST(sgemm_notrans);
+        RUN_TEST(sgemm_trans_A);
+        RUN_TEST(sgemm_trans_B);
+        RUN_TEST(sgemm_trans_AB);
     }
 
     L1_VECTOR_TEST(scopy, scopy(N, x, 1, y, 1))
@@ -226,6 +229,15 @@ struct BLASFloatTests : public BLASTestBase<float> {
     L3_TEST(sgemm_notrans,
             cblas_sgemm(CblasColMajor, CblasNoTrans, CblasNoTrans, N, N, N, alpha, A, N, B, N, beta, C, N),
             hblas_sgemm(HblasColMajor, HblasNoTrans, HblasNoTrans, N, N, N, alpha, A, N, B, N, beta, C, N));
+    L3_TEST(sgemm_trans_A,
+            cblas_sgemm(CblasColMajor, CblasTrans, CblasNoTrans, N, N, N, alpha, A, N, B, N, beta, C, N),
+            hblas_sgemm(HblasColMajor, HblasTrans, HblasNoTrans, N, N, N, alpha, A, N, B, N, beta, C, N));
+    L3_TEST(sgemm_trans_B,
+            cblas_sgemm(CblasColMajor, CblasNoTrans, CblasTrans, N, N, N, alpha, A, N, B, N, beta, C, N),
+            hblas_sgemm(HblasColMajor, HblasNoTrans, HblasTrans, N, N, N, alpha, A, N, B, N, beta, C, N));
+    L3_TEST(sgemm_trans_AB,
+            cblas_sgemm(CblasColMajor, CblasTrans, CblasTrans, N, N, N, alpha, A, N, B, N, beta, C, N),
+            hblas_sgemm(HblasColMajor, HblasTrans, HblasTrans, N, N, N, alpha, A, N, B, N, beta, C, N));
 };
 
 struct BLASDoubleTests : public BLASTestBase<double> {
@@ -238,6 +250,9 @@ struct BLASDoubleTests : public BLASTestBase<double> {
         RUN_TEST(dgemv_notrans);
         RUN_TEST(dgemv_trans);
         RUN_TEST(dgemm_notrans);
+        RUN_TEST(dgemm_trans_A);
+        RUN_TEST(dgemm_trans_B);
+        RUN_TEST(dgemm_trans_AB);
     }
 
     L1_VECTOR_TEST(dcopy, dcopy(N, x, 1, y, 1))
@@ -257,6 +272,15 @@ struct BLASDoubleTests : public BLASTestBase<double> {
     L3_TEST(dgemm_notrans,
             cblas_dgemm(CblasColMajor, CblasNoTrans, CblasNoTrans, N, N, N, alpha, A, N, B, N, beta, C, N),
             hblas_dgemm(HblasColMajor, HblasNoTrans, HblasNoTrans, N, N, N, alpha, A, N, B, N, beta, C, N));
+    L3_TEST(dgemm_trans_A,
+            cblas_dgemm(CblasColMajor, CblasTrans, CblasNoTrans, N, N, N, alpha, A, N, B, N, beta, C, N),
+            hblas_dgemm(HblasColMajor, HblasTrans, HblasNoTrans, N, N, N, alpha, A, N, B, N, beta, C, N));
+    L3_TEST(dgemm_trans_B,
+            cblas_dgemm(CblasColMajor, CblasNoTrans, CblasTrans, N, N, N, alpha, A, N, B, N, beta, C, N),
+            hblas_dgemm(HblasColMajor, HblasNoTrans, HblasTrans, N, N, N, alpha, A, N, B, N, beta, C, N));
+    L3_TEST(dgemm_trans_AB,
+            cblas_dgemm(CblasColMajor, CblasTrans, CblasTrans, N, N, N, alpha, A, N, B, N, beta, C, N),
+            hblas_dgemm(HblasColMajor, HblasTrans, HblasTrans, N, N, N, alpha, A, N, B, N, beta, C, N));
 };
 
 int main(int argc, char *argv[]) {

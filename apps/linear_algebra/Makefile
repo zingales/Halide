@@ -30,6 +30,12 @@ KERNELS = \
 	dgemv_trans \
 	sgemm_notrans \
 	dgemm_notrans \
+	sgemm_trans_A \
+	dgemm_trans_A \
+	sgemm_trans_B \
+	dgemm_trans_B \
+	sgemm_trans_AB \
+	dgemm_trans_AB \
 
 BENCHMARKS = \
 	benchmarks/cblas_benchmarks \
@@ -242,3 +248,27 @@ $(KERNEL_DIR)/halide_sgemm_notrans.o $(KERNEL_DIR)/halide_sgemm_notrans.h: $(KER
 $(KERNEL_DIR)/halide_dgemm_notrans.o $(KERNEL_DIR)/halide_dgemm_notrans.h: $(KERNEL_DIR)/blas_l3.generator
 	$(LD_PATH_SETUP) $< -g dgemm -f halide_dgemm_notrans -o $(KERNEL_DIR) -e $(EMIT_OPTIONS) \
 	target=$(HL_TARGET) parallel=false vectorize=true transpose_A=false transpose_B=false
+
+$(KERNEL_DIR)/halide_sgemm_trans_A.o $(KERNEL_DIR)/halide_sgemm_trans_A.h: $(KERNEL_DIR)/blas_l3.generator
+	$(LD_PATH_SETUP) $< -g sgemm -f halide_sgemm_notrans -o $(KERNEL_DIR) -e $(EMIT_OPTIONS) \
+	target=$(HL_TARGET) parallel=false vectorize=true transpose_A=true transpose_B=false
+
+$(KERNEL_DIR)/halide_dgemm_trans_A.o $(KERNEL_DIR)/halide_dgemm_trans_A.h: $(KERNEL_DIR)/blas_l3.generator
+	$(LD_PATH_SETUP) $< -g dgemm -f halide_dgemm_notrans -o $(KERNEL_DIR) -e $(EMIT_OPTIONS) \
+	target=$(HL_TARGET) parallel=false vectorize=true transpose_A=true transpose_B=false
+
+$(KERNEL_DIR)/halide_sgemm_trans_B.o $(KERNEL_DIR)/halide_sgemm_trans_B.h: $(KERNEL_DIR)/blas_l3.generator
+	$(LD_PATH_SETUP) $< -g sgemm -f halide_sgemm_notrans -o $(KERNEL_DIR) -e $(EMIT_OPTIONS) \
+	target=$(HL_TARGET) parallel=false vectorize=true transpose_A=false transpose_B=true
+
+$(KERNEL_DIR)/halide_dgemm_trans_B.o $(KERNEL_DIR)/halide_dgemm_trans_B.h: $(KERNEL_DIR)/blas_l3.generator
+	$(LD_PATH_SETUP) $< -g dgemm -f halide_dgemm_notrans -o $(KERNEL_DIR) -e $(EMIT_OPTIONS) \
+	target=$(HL_TARGET) parallel=false vectorize=true transpose_A=false transpose_B=true
+
+$(KERNEL_DIR)/halide_sgemm_trans_AB.o $(KERNEL_DIR)/halide_sgemm_trans_B.h: $(KERNEL_DIR)/blas_l3.generator
+	$(LD_PATH_SETUP) $< -g sgemm -f halide_sgemm_notrans -o $(KERNEL_DIR) -e $(EMIT_OPTIONS) \
+	target=$(HL_TARGET) parallel=false vectorize=true transpose_A=true transpose_B=true
+
+$(KERNEL_DIR)/halide_dgemm_trans_AB.o $(KERNEL_DIR)/halide_dgemm_trans_B.h: $(KERNEL_DIR)/blas_l3.generator
+	$(LD_PATH_SETUP) $< -g dgemm -f halide_dgemm_notrans -o $(KERNEL_DIR) -e $(EMIT_OPTIONS) \
+	target=$(HL_TARGET) parallel=false vectorize=true transpose_A=true transpose_B=true

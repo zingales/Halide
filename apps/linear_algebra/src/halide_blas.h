@@ -66,13 +66,13 @@ inline int halide_sgemm(bool transA, bool transB, float a, buffer_t *A, buffer_t
         return halide_sgemm_notrans(a, A, B, b, C, C);
     } else if (transA) {
         // TODO: transposed multiplication not implemented yet.
-        // return halide_sgemv_trans_A(a, A, B, b, C, C);
+        return halide_sgemv_trans_A(a, A, B, b, C, C);
     } else if (transB) {
         // TODO: transposed multiplication not implemented yet.
-        // return halide_sgemv_trans_B(a, A, B, b, C, C);
+        return halide_sgemv_trans_B(a, A, B, b, C, C);
     } else {
         // TODO: transposed multiplication not implemented yet.
-        // return halide_sgemv_trans_AB(a, A, B, b, C, C);
+        return halide_sgemv_trans_AB(a, A, B, b, C, C);
     }
     return -1;
 }
@@ -82,13 +82,13 @@ inline int halide_dgemm(bool transA, bool transB, double a, buffer_t *A, buffer_
         return halide_dgemm_notrans(a, A, B, b, C, C);
     } else if (transA) {
         // TODO: transposed multiplication not implemented yet.
-        // return halide_dgemv_trans_A(a, A, B, b, C, C);
+        return halide_dgemv_trans_A(a, A, B, b, C, C);
     } else if (transB) {
         // TODO: transposed multiplication not implemented yet.
-        // return halide_dgemv_trans_B(a, A, B, b, C, C);
+        return halide_dgemv_trans_B(a, A, B, b, C, C);
     } else {
         // TODO: transposed multiplication not implemented yet.
-        // return halide_dgemv_trans_AB(a, A, B, b, C, C);
+        return halide_dgemv_trans_AB(a, A, B, b, C, C);
     }
     return -1;
 }

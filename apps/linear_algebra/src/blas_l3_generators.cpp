@@ -46,26 +46,68 @@ class GEMMGenerator :
         SetupTarget();
 
         const int vec_size = vectorize_? natural_vector_size(type_of<T>()): 1;
+        const Expr num_rows = transpose_A_? A_.height(): A_.width();
+        const Expr num_cols = transpose_B_? B_.width(): B_.height();
+        const Expr sum_size = transpose_A_? A_.width(): A_.height();
+        const Expr proxy_size = ((sum_size + block_size_ - 1) / block_size_) * block_size_;
 
-        Var i("i"), j("j");
+        Var i("i"), j("j"), n("n");
         Func result("result");
+        Func A, B;
+        A(i, j) = transpose_A_? 
+          select(j < sum_size, A_(clamp(j, 0, sum_size), i), cast<T>(0)):
+          select(j < sum_size, A_(i, clamp(j, 0, sum_size)), cast<T>(0));
+        B(i, j) = transpose_B_?
+          select(i < sum_size, B_(j, clamp(i, 0, sum_size)), cast<T>(0)):
+          select(i < sum_size, B_(clamp(i, 0, sum_size), j), cast<T>(0));
+
         // TODO: Currently I have only implemented the non-transpose
         // case. Need to provide implementations for transposing either,
         // or both, A & B.
-        if (!transpose_A_ && !transpose_B_) {
-            const Expr num_rows = A_.width();
-            const Expr num_cols = B_.height();
-            const Expr sum_size = A_.height();
-            const Expr proxy_size = ((sum_size + block_size_ - 1) / block_size_) * block_size_;
+        if (transpose_A_) {
+            RDom k(0, proxy_size, "k");
+            Func AB("AB");
+            AB(n, i, j) += A(i, k*vec_size + n) * B(k*vec_size + n, j);
 
-            Func A, B;
-            A(i, j) = select(j < sum_size, A_(i, clamp(j, 0, sum_size)), cast<T>(0));
-            B(i, j) = select(i < sum_size, B_(clamp(i, 0, sum_size), i), cast<T>(0));
+            // Func At("At");
+            // At(i, j) = Ax(j, i);
 
+            RDom sum_lanes(0, vec_size);
+            Func prod("prod");
+            prod(i)  += AB(sum_lanes, i, j);
+            result(i) = b_ * y_(i) + a_ * prod(i);
+
+            if (vectorize_) {
+                Var ii("ii"), ji("ji");
+                result.specialize(num_rows >= block_size_ && num_cols >= block_size_)
+                    .tile(i, j, ii, ji, block_size_, block_size_).parallel(j)
+                    .vectorize(ii, vec_size).unroll(ii);
+
+                result.specialize(num_rows >= vec_size).vectorize(i, vec_size);
+
+                RVar ki("ki");
+                AB.compute_at(result, i).vectorize(j).unroll(i);
+                AB.update(0).specialize(num_rows >= block_size_)
+                    .split(k, k, ki, block_size_)
+                    .reorder(i, j, ki, k)
+                    .vectorize(i, vec_size).unroll(i);
+
+                prod.compute_at(result, i);
+                prod.vectorize(i, vec_size).unroll(i);
+                prod.update(0).specialize(num_rows >= vec_size)
+                    .reorder(i, sum_lanes).unroll(sum_lanes)
+                    .vectorize(i, vec_size).unroll(i);
+            }
+
+            A_.set_min(0, 0).set_min(1, 0);
+            x_.set_bounds(0, 0, A_.width());
+            y_.set_bounds(0, 0, A_.height());
+            result.output_buffer().set_bounds(0, 0, A_.height());
+        } else {
             RDom k(0, proxy_size);
             Func prod("prod");
             prod(i, j)  = b_ * C_(i, j);
-            prod(i, j) += a_ * A_(i, k) * B_(k, j);
+            prod(i, j) += a_ * A(i, k) * B(k, j);
             result(i, j) = prod(i, j);
 
             if (vectorize_) {
@@ -86,18 +128,10 @@ class GEMMGenerator :
             }
 
             A_.set_min(0, 0).set_min(1, 0);
+                             
             B_.set_bounds(0, 0, sum_size).set_min(1, 0);
             C_.set_bounds(0, 0, num_rows).set_bounds(1, 0, num_cols);
             result.output_buffer().set_bounds(0, 0, num_rows).set_bounds(1, 0, num_cols);
-        } else if (!transpose_A_) {
-            // TODO.
-            result(i, j) = undef<T>();
-        } else if (!transpose_B_) {
-            // TODO.
-            result(i, j) = undef<T>();
-        } else {
-            // TODO.
-            result(i, j) = undef<T>();
         }
 
         return result;
