@@ -137,12 +137,12 @@ struct Benchmarks {
             bench_gemv_trans(size);
         } else if (benchmark == "gemm_notrans") {
             bench_gemm_notrans(size);
-        } else if (benchmark == "gemm_transA") {
-            bench_gemm_transA(size);
-        } else if (benchmark == "gemm_transB") {
-            bench_gemm_transB(size);
-        } else if (benchmark == "gemm_transAB") {
-            bench_gemm_transAB(size);
+        } else if (benchmark == "gemm_trans_A") {
+            bench_gemm_trans_A(size);
+        } else if (benchmark == "gemm_trans_B") {
+            bench_gemm_trans_B(size);
+        } else if (benchmark == "gemm_trans_AB") {
+            bench_gemm_trans_AB(size);
         }
     }
 
@@ -158,9 +158,9 @@ struct Benchmarks {
     L2Benchmark(gemv_trans,   type_name<T>(), y = alpha * A.transpose() * x + beta * y);
 
     L3Benchmark(gemm_notrans, type_name<T>(), C = alpha * A * B + beta * C);
-    L3Benchmark(gemm_transA, type_name<T>(), C = alpha * A.transpose() * B + beta * C);
-    L3Benchmark(gemm_transB, type_name<T>(), C = alpha * A * B.transpose() + beta * C);
-    L3Benchmark(gemm_transAB, type_name<T>(), C = alpha * A.transpose() * B.transpose() + beta * C);
+    L3Benchmark(gemm_trans_A, type_name<T>(), C = alpha * A.transpose() * B + beta * C);
+    L3Benchmark(gemm_trans_B, type_name<T>(), C = alpha * A * B.transpose() + beta * C);
+    L3Benchmark(gemm_trans_AB, type_name<T>(), C = alpha * A.transpose() * B.transpose() + beta * C);
 
   private:
     std::string name;

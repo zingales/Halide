@@ -142,12 +142,12 @@ struct BenchmarksBase {
             bench_gemv_trans(size);
         } else if (benchmark == "gemm_notrans") {
             bench_gemm_notrans(size);
-        } else if (benchmark == "gemm_transA") {
-            bench_gemm_transA(size);
-        } else if (benchmark == "gemm_transB") {
-            bench_gemm_transB(size);
-        } else if (benchmark == "gemm_transAB") {
-            bench_gemm_transAB(size);
+        } else if (benchmark == "gemm_trans_A") {
+            bench_gemm_trans_A(size);
+        } else if (benchmark == "gemm_trans_B") {
+            bench_gemm_trans_B(size);
+        } else if (benchmark == "gemm_trans_AB") {
+            bench_gemm_trans_AB(size);
         }
     }
 
@@ -159,9 +159,9 @@ struct BenchmarksBase {
     virtual void bench_gemv_notrans(int N) =0;
     virtual void bench_gemv_trans(int N) =0;
     virtual void bench_gemm_notrans(int N) =0;
-    virtual void bench_gemm_transA(int N) =0;
-    virtual void bench_gemm_transB(int N) =0;
-    virtual void bench_gemm_transAB(int N) =0;
+    virtual void bench_gemm_trans_A(int N) =0;
+    virtual void bench_gemm_trans_B(int N) =0;
+    virtual void bench_gemm_trans_AB(int N) =0;
 };
 
 struct BenchmarksFloat : public BenchmarksBase<float> {
@@ -179,22 +179,22 @@ struct BenchmarksFloat : public BenchmarksBase<float> {
     L1Benchmark(asum, "s", halide_sasum(x->raw_buffer(), result.raw_buffer()))
 
     L2Benchmark(gemv_notrans, "s", halide_sgemv(false, alpha, A->raw_buffer(), x->raw_buffer(),
-                                                    beta, y->raw_buffer()))
+                                                beta, y->raw_buffer()))
 
     L2Benchmark(gemv_trans, "s", halide_sgemv(true, alpha, A->raw_buffer(), x->raw_buffer(),
-                                                  beta, y->raw_buffer()))
+                                              beta, y->raw_buffer()))
 
     L3Benchmark(gemm_notrans, "s", halide_sgemm(false, false, alpha, A->raw_buffer(),
                                                 B->raw_buffer(), beta, C->raw_buffer()))
 
-    L3Benchmark(gemm_transA, "s", halide_sgemm(true, false, alpha, A->raw_buffer(),
+    L3Benchmark(gemm_trans_A, "s", halide_sgemm(true, false, alpha, A->raw_buffer(),
                                                 B->raw_buffer(), beta, C->raw_buffer()))
 
-    L3Benchmark(gemm_transB, "s", halide_sgemm(false, true, alpha, A->raw_buffer(),
+    L3Benchmark(gemm_trans_B, "s", halide_sgemm(false, true, alpha, A->raw_buffer(),
                                                 B->raw_buffer(), beta, C->raw_buffer()))
 
-    L3Benchmark(gemm_transAB, "s", halide_sgemm(true, true, alpha, A->raw_buffer(),
-                                                B->raw_buffer(), beta, C->raw_buffer()))
+    L3Benchmark(gemm_trans_AB, "s", halide_sgemm(true, true, alpha, A->raw_buffer(),
+                                                 B->raw_buffer(), beta, C->raw_buffer()))
 };
 
 struct BenchmarksDouble : public BenchmarksBase<double> {
@@ -212,21 +212,21 @@ struct BenchmarksDouble : public BenchmarksBase<double> {
     L1Benchmark(asum, "d", halide_dasum(x->raw_buffer(), result.raw_buffer()))
 
     L2Benchmark(gemv_notrans, "d", halide_dgemv(false, alpha, A->raw_buffer(), x->raw_buffer(),
-                                                     beta, y->raw_buffer()))
+                                                beta, y->raw_buffer()))
 
     L2Benchmark(gemv_trans, "d", halide_dgemv(true, alpha, A->raw_buffer(), x->raw_buffer(),
-                                                   beta, y->raw_buffer()))
+                                              beta, y->raw_buffer()))
 
     L3Benchmark(gemm_notrans, "d", halide_dgemm(false, false, alpha, A->raw_buffer(),
                                                 B->raw_buffer(), beta, C->raw_buffer()))
 
-    L3Benchmark(gemm_transA, "d", halide_dgemm(true, false, alpha, A->raw_buffer(),
+    L3Benchmark(gemm_trans_A, "d", halide_dgemm(true, false, alpha, A->raw_buffer(),
                                                 B->raw_buffer(), beta, C->raw_buffer()))
 
-    L3Benchmark(gemm_transB, "d", halide_dgemm(false, true, alpha, A->raw_buffer(),
+    L3Benchmark(gemm_trans_B, "d", halide_dgemm(false, true, alpha, A->raw_buffer(),
                                                 B->raw_buffer(), beta, C->raw_buffer()))
 
-    L3Benchmark(gemm_transAB, "d", halide_dgemm(true, true, alpha, A->raw_buffer(),
+    L3Benchmark(gemm_trans_AB, "d", halide_dgemm(true, true, alpha, A->raw_buffer(),
                                                 B->raw_buffer(), beta, C->raw_buffer()))
 };
 

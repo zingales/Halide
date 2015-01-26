@@ -150,6 +150,12 @@ struct BenchmarksBase {
             this->bench_gemv_trans(size);
         } else if (benchmark == "gemm_notrans") {
             this->bench_gemm_notrans(size);
+        } else if (benchmark == "gemm_trans_A") {
+            bench_gemm_trans_A(size);
+        } else if (benchmark == "gemm_trans_B") {
+            bench_gemm_trans_B(size);
+        } else if (benchmark == "gemm_trans_AB") {
+            bench_gemm_trans_AB(size);
         }
     }
 
@@ -161,6 +167,9 @@ struct BenchmarksBase {
     virtual void bench_gemv_notrans(int N) =0;
     virtual void bench_gemv_trans(int N) =0;
     virtual void bench_gemm_notrans(int N) =0;
+    virtual void bench_gemm_trans_A(int N) =0;
+    virtual void bench_gemm_trans_B(int N) =0;
+    virtual void bench_gemm_trans_AB(int N) =0;
 };
 
 struct BenchmarksFloat : public BenchmarksBase<float> {
@@ -188,17 +197,17 @@ struct BenchmarksFloat : public BenchmarksBase<float> {
                                                alpha, &(A->front()), N, &(B->front()), N,
                                                beta, &(C->front()), N))
 
-    L3Benchmark(gemm_transA, "s", cblas_sgemm(CblasColMajor, CblasTrans, CblasNoTrans, N, N, N,
-                                              alpha, &(A->front()), N, &(B->front()), N,
-                                              beta, &(C->front()), N))
-
-    L3Benchmark(gemm_transB, "s", cblas_sgemm(CblasColMajor, CblasNoTrans, CblasTrans, N, N, N,
-                                              alpha, &(A->front()), N, &(B->front()), N,
-                                              beta, &(C->front()), N))
-
-    L3Benchmark(gemm_transAB, "s", cblas_sgemm(CblasColMajor, CblasTrans, CblasTrans, N, N, N,
+    L3Benchmark(gemm_trans_A, "s", cblas_sgemm(CblasColMajor, CblasTrans, CblasNoTrans, N, N, N,
                                                alpha, &(A->front()), N, &(B->front()), N,
                                                beta, &(C->front()), N))
+
+    L3Benchmark(gemm_trans_B, "s", cblas_sgemm(CblasColMajor, CblasNoTrans, CblasTrans, N, N, N,
+                                               alpha, &(A->front()), N, &(B->front()), N,
+                                               beta, &(C->front()), N))
+
+    L3Benchmark(gemm_trans_AB, "s", cblas_sgemm(CblasColMajor, CblasTrans, CblasTrans, N, N, N,
+                                                alpha, &(A->front()), N, &(B->front()), N,
+                                                beta, &(C->front()), N))
 };
 
 struct BenchmarksDouble : public BenchmarksBase<double> {
@@ -226,17 +235,17 @@ struct BenchmarksDouble : public BenchmarksBase<double> {
                                                alpha, &(A->front()), N, &(B->front()), N,
                                                beta, &(C->front()), N))
 
-    L3Benchmark(gemm_transA, "d", cblas_dgemm(CblasColMajor, CblasTrans, CblasNoTrans, N, N, N,
-                                              alpha, &(A->front()), N, &(B->front()), N,
-                                              beta, &(C->front()), N))
-
-    L3Benchmark(gemm_transB, "d", cblas_dgemm(CblasColMajor, CblasNoTrans, CblasTrans, N, N, N,
-                                              alpha, &(A->front()), N, &(B->front()), N,
-                                              beta, &(C->front()), N))
-
-    L3Benchmark(gemm_transAB, "d", cblas_dgemm(CblasColMajor, CblasTrans, CblasTrans, N, N, N,
+    L3Benchmark(gemm_trans_A, "d", cblas_dgemm(CblasColMajor, CblasTrans, CblasNoTrans, N, N, N,
                                                alpha, &(A->front()), N, &(B->front()), N,
                                                beta, &(C->front()), N))
+
+    L3Benchmark(gemm_trans_B, "d", cblas_dgemm(CblasColMajor, CblasNoTrans, CblasTrans, N, N, N,
+                                               alpha, &(A->front()), N, &(B->front()), N,
+                                               beta, &(C->front()), N))
+
+    L3Benchmark(gemm_trans_AB, "d", cblas_dgemm(CblasColMajor, CblasTrans, CblasTrans, N, N, N,
+                                                alpha, &(A->front()), N, &(B->front()), N,
+                                                beta, &(C->front()), N))
 };
 
 int main(int argc, char* argv[]) {

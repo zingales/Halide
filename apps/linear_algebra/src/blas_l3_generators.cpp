@@ -54,7 +54,7 @@ class GEMMGenerator :
         Var i("i"), j("j"), n("n");
         Func result("result");
         Func A, B;
-        A(i, j) = transpose_A_? 
+        A(i, j) = transpose_A_?
           select(j < sum_size, A_(clamp(j, 0, sum_size), i), cast<T>(0)):
           select(j < sum_size, A_(i, clamp(j, 0, sum_size)), cast<T>(0));
         B(i, j) = transpose_B_?
@@ -74,8 +74,8 @@ class GEMMGenerator :
 
             RDom sum_lanes(0, vec_size);
             Func prod("prod");
-            prod(i)  += AB(sum_lanes, i, j);
-            result(i) = b_ * y_(i) + a_ * prod(i);
+            prod(i, j)  += AB(sum_lanes, i, j);
+            result(i, j) = b_ * C_(i, j) + a_ * prod(i, j);
 
             if (vectorize_) {
                 Var ii("ii"), ji("ji");
@@ -86,7 +86,7 @@ class GEMMGenerator :
                 result.specialize(num_rows >= vec_size).vectorize(i, vec_size);
 
                 RVar ki("ki");
-                AB.compute_at(result, i).vectorize(j).unroll(i);
+                AB.compute_at(result, i).reorder(i, j, n).vectorize(j).unroll(i);
                 AB.update(0).specialize(num_rows >= block_size_)
                     .split(k, k, ki, block_size_)
                     .reorder(i, j, ki, k)
@@ -100,8 +100,8 @@ class GEMMGenerator :
             }
 
             A_.set_min(0, 0).set_min(1, 0);
-            x_.set_bounds(0, 0, A_.width());
-            y_.set_bounds(0, 0, A_.height());
+            B_.set_bounds(0, 0, sum_size).set_min(1, 0);
+            C_.set_bounds(0, 0, num_rows).set_bounds(1, 0, num_cols);
             result.output_buffer().set_bounds(0, 0, A_.height());
         } else {
             RDom k(0, proxy_size);
@@ -128,7 +128,6 @@ class GEMMGenerator :
             }
 
             A_.set_min(0, 0).set_min(1, 0);
-                             
             B_.set_bounds(0, 0, sum_size).set_min(1, 0);
             C_.set_bounds(0, 0, num_rows).set_bounds(1, 0, num_cols);
             result.output_buffer().set_bounds(0, 0, num_rows).set_bounds(1, 0, num_cols);
