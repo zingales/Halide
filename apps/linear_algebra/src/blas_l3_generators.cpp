@@ -53,84 +53,47 @@ class GEMMGenerator :
 
         Var i("i"), j("j"), n("n");
         Func result("result");
+        Func At("At"), Bt("Bt");
         Func A, B;
+        At(i, j) = A_(j, i);
+        Bt(i, j) = B_(j, i);
         A(i, j) = transpose_A_?
-          select(j < sum_size, A_(clamp(j, 0, sum_size), i), cast<T>(0)):
-          select(j < sum_size, A_(i, clamp(j, 0, sum_size)), cast<T>(0));
+                select(j < sum_size, At(i, clamp(j, 0, sum_size)), cast<T>(0)):
+                select(j < sum_size, A_(i, clamp(j, 0, sum_size)), cast<T>(0));
         B(i, j) = transpose_B_?
-          select(i < sum_size, B_(j, clamp(i, 0, sum_size)), cast<T>(0)):
-          select(i < sum_size, B_(clamp(i, 0, sum_size), j), cast<T>(0));
+                select(i < sum_size, Bt(clamp(i, 0, sum_size), j), cast<T>(0)):
+                select(i < sum_size, B_(clamp(i, 0, sum_size), j), cast<T>(0));
 
-        // TODO: Currently I have only implemented the non-transpose
-        // case. Need to provide implementations for transposing either,
-        // or both, A & B.
-        if (transpose_A_) {
-            RDom k(0, proxy_size, "k");
-            Func AB("AB");
-            AB(n, i, j) += A(i, k*vec_size + n) * B(k*vec_size + n, j);
+        RDom k(0, proxy_size);
+        Func prod("prod");
+        prod(i, j) = b_ * C_(i, j);
+        prod(i, j) += a_ * A(i, k) * B(k, j);
+        result(i, j) = prod(i, j);
 
-            // Func At("At");
-            // At(i, j) = Ax(j, i);
+        if (vectorize_) {
+          Var ii("ii"), ji("ji");
+          result.specialize(num_rows >= block_size_ && num_cols >= block_size_)
+              .tile(i, j, ii, ji, block_size_, block_size_).parallel(j)
+              .vectorize(ii, vec_size).unroll(ii);
 
-            RDom sum_lanes(0, vec_size);
-            Func prod("prod");
-            prod(i, j)  += AB(sum_lanes, i, j);
-            result(i, j) = b_ * C_(i, j) + a_ * prod(i, j);
+          result.specialize(num_rows >= vec_size).vectorize(i, vec_size);
 
-            if (vectorize_) {
-                Var ii("ii"), ji("ji");
-                result.specialize(num_rows >= block_size_ && num_cols >= block_size_)
-                    .tile(i, j, ii, ji, block_size_, block_size_).parallel(j)
-                    .vectorize(ii, vec_size).unroll(ii);
+          RVar ki("ki");
+          prod.compute_at(result, i);
+          prod.vectorize(i, vec_size).unroll(i);
+          prod.update(0)
+              .split(k, k, ki, block_size_)
+              .reorder(i, j, ki, k)
+              .vectorize(i, vec_size).unroll(i);
 
-                result.specialize(num_rows >= vec_size).vectorize(i, vec_size);
+          if (transpose_A_) {
+            At.compute_at(prod, k).vectorize(j, vec_size).unroll(i);
+          }
 
-                RVar ki("ki");
-                AB.compute_at(result, i).reorder(i, j, n).vectorize(j).unroll(i);
-                AB.update(0).specialize(num_rows >= block_size_)
-                    .split(k, k, ki, block_size_)
-                    .reorder(i, j, ki, k)
-                    .vectorize(i, vec_size).unroll(i);
-
-                prod.compute_at(result, i);
-                prod.vectorize(i, vec_size).unroll(i);
-                prod.update(0).specialize(num_rows >= vec_size)
-                    .reorder(i, sum_lanes).unroll(sum_lanes)
-                    .vectorize(i, vec_size).unroll(i);
-            }
-
-            A_.set_min(0, 0).set_min(1, 0);
-            B_.set_bounds(0, 0, sum_size).set_min(1, 0);
-            C_.set_bounds(0, 0, num_rows).set_bounds(1, 0, num_cols);
-            result.output_buffer().set_bounds(0, 0, A_.height());
-        } else {
-            RDom k(0, proxy_size);
-            Func prod("prod");
-            prod(i, j)  = b_ * C_(i, j);
-            prod(i, j) += a_ * A(i, k) * B(k, j);
-            result(i, j) = prod(i, j);
-
-            if (vectorize_) {
-                Var ii("ii"), ji("ji");
-                result.specialize(num_rows >= block_size_ && num_cols >= block_size_)
-                    .tile(i, j, ii, ji, block_size_, block_size_).parallel(j)
-                    .vectorize(ii, vec_size).unroll(ii);
-
-                result.specialize(num_rows >= vec_size).vectorize(i, vec_size);
-
-                RVar ki("ki");
-                prod.compute_at(result, i);
-                prod.vectorize(i, vec_size).unroll(i);
-                prod.update(0)
-                    .split(k, k, ki, block_size_)
-                    .reorder(i, j, ki, k)
-                    .vectorize(i, vec_size).unroll(i);
-            }
-
-            A_.set_min(0, 0).set_min(1, 0);
-            B_.set_bounds(0, 0, sum_size).set_min(1, 0);
-            C_.set_bounds(0, 0, num_rows).set_bounds(1, 0, num_cols);
-            result.output_buffer().set_bounds(0, 0, num_rows).set_bounds(1, 0, num_cols);
+          A_.set_min(0, 0).set_min(1, 0);
+          B_.set_bounds(0, 0, sum_size).set_min(1, 0);
+          C_.set_bounds(0, 0, num_rows).set_bounds(1, 0, num_cols);
+          result.output_buffer().set_bounds(0, 0, num_rows).set_bounds(1, 0, num_cols);
         }
 
         return result;

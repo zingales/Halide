@@ -1,3 +1,4 @@
+#include <iomanip>
 #include <queue>
 #include <set>
 #include <stack>
@@ -28,6 +29,16 @@ using std::vector;
 static const size_t branching_limit = 10;
 
 namespace {
+bool is_extent_var(const Variable *v) {
+    std::vector<std::string> parts = split_string(v->name, ".");
+    for (size_t i = 0; i < parts.size(); ++i) {
+        if (parts[i] == "extent") {
+            return true;
+        }
+    }
+    return false;
+}
+
 // A method used to test if we should pull out a min/extent expr
 // into a let stmt, modified from CSE.cpp
 bool should_extract(Expr e) {
@@ -205,6 +216,30 @@ bool has_free_vars(Expr expr, const Scope<int> &free_vars, const Scope<Expr> &sc
     return expr_uses_vars(expr, free_vars, scope);
 }
 
+class RemoveLocalScope : public IRMutator {
+    using IRMutator::visit;
+
+    const Scope<int>  &local_vars;
+    const Scope<Expr> &scope;
+
+    void visit(const Variable *v) {
+        std::string base_name = v->name.substr(0, v->name.find_last_of("."));
+        if (local_vars.contains(v->name) || local_vars.contains(base_name)) {
+            expr = mutate(scope.get(v->name));
+        } else {
+            expr = v;
+        }
+    }
+public:
+    RemoveLocalScope(const Scope<int> &lv, const Scope<Expr> &s) :
+            local_vars(lv), scope(s)
+    {}
+};
+
+Expr remove_local_scope(Expr expr, const Scope<int> &local_vars, const Scope<Expr> &scope) {
+    return RemoveLocalScope(local_vars, scope).mutate(expr);
+}
+
 /* This visitor performs the main work for the specialize_branched_loops optimization pass.
  * We are given a variable that we are checking for branches in, a current scope, a list of
  * any other free variables, and some bounds infor on those variables. This visitor then
@@ -311,9 +346,11 @@ private:
     stack<Expr> curr_extent;
 
     friend std::ostream &operator<<(std::ostream &out, const Branch &b) {
-        out << "branch(" << b.min << ", " << b.extent << "): {";
-        if (b.content.is_stmt()) out << "\n";
-        out << b.content << "}";
+        out << "branch {\n"
+            << std::setw(10) << "min: " << b.min << "\n"
+            << std::setw(10) << "extent: " << b.extent << "\n"
+            << std::setw(10) << "content: " << b.content << "\n"
+            << "}";
         return out;
     }
 
@@ -338,6 +375,8 @@ private:
     }
 
     void push_bounds(Expr min, Expr extent) {
+        min = simplify(remove_local_scope(min, let_num_branches, scope));
+        extent = simplify(remove_local_scope(extent, let_num_branches, scope));
         Expr max = simplify(min + extent - 1);
         curr_min.push(min);
         curr_extent.push(extent);
@@ -686,6 +725,10 @@ private:
     }
 
     void visit(const Variable *op) {
+        if (is_extent_var(op) && !bounds_info.contains(op->name)) {
+            bounds_info.push(op->name, Interval(0, Expr()));
+        }
+
         if (let_branches.contains(op->name)) {
             vector<Branch> &var_branches = let_branches.ref(op->name);
 
@@ -740,30 +783,28 @@ private:
     void visit_min_or_max(const Op *op) {
         visit_binary_op(op);
 
-        if (!branching_vars) {
-            vector<Branch> child_branches;
-            branches.swap(child_branches);
-            for (size_t i = 0; i < child_branches.size(); ++i) {
-                Branch &branch = child_branches[i];
-                const Op *min_or_max = branch.content.as<Op>();
-                if (min_or_max) {
-                    Expr a = min_or_max->a;
-                    Expr b = min_or_max->b;
-                    if (expr_uses_var(a, name, scope) || expr_uses_var(b, name, scope)) {
-                        push_bounds(branch.min, branch.extent);
-                        Expr cond = Cmp::make(a, b);
-                        if (!visit_simple_cond(cond, a, b)) {
-                            branches.push_back(branch);
-                        }
-                        pop_bounds();
-
-                        continue;
+        vector<Branch> child_branches;
+        branches.swap(child_branches);
+        for (size_t i = 0; i < child_branches.size(); ++i) {
+            Branch &branch = child_branches[i];
+            const Op *min_or_max = branch.content.as<Op>();
+            if (min_or_max) {
+                Expr a = min_or_max->a;
+                Expr b = min_or_max->b;
+                if (expr_uses_var(a, name, scope) || expr_uses_var(b, name, scope)) {
+                    push_bounds(branch.min, branch.extent);
+                    Expr cond = Cmp::make(a, b);
+                    if (!visit_simple_cond(cond, a, b)) {
+                        branches.push_back(branch);
                     }
-                }
+                    pop_bounds();
 
-                // We did not branch, so add current branch as is.
-                branches.push_back(branch);
+                    continue;
+                }
             }
+
+            // We did not branch, so add current branch as is.
+            branches.push_back(branch);
         }
     }
 
