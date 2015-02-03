@@ -4,9 +4,15 @@
 # used to determine the location of the other output files like the bit code and
 # html.
 function(halide_generator_output_path gen_name result_var)
+  # Convert the binary dir to a native path
   file(TO_NATIVE_PATH "${CMAKE_CURRENT_BINARY_DIR}/" NATIVE_INT_DIR)
-  set(${result_var} "${NATIVE_INT_DIR}scratch_${gen_name}" PARENT_SCOPE)
-  file(MAKE_DIRECTORY "${result_var}")
+
+  # Create a directory to contain generator specific intermediate files
+  set(scratch_dir "${NATIVE_INT_DIR}scratch_${gen_name}")
+  file(MAKE_DIRECTORY "${scratch_dir}")
+
+  # Set the output variable
+  set(${result_var} "${scratch_dir}" PARENT_SCOPE)
 endfunction(halide_generator_output_path)
 
 # This function adds custom build steps to invoke a Halide generator exectuable,

@@ -136,58 +136,31 @@ if("${NATIVE_INT_DIR}" STREQUAL "./")
   set(NATIVE_INT_DIR "")
 endif()
 
-# Commands to build initial module objects.
+include("HalideRuntime.cmake")
+
+# Compile each of the runtime source files into a LLVM bitcode file and encode
+# the file in a extern unsigned char[] symbol in a second .cpp file. This source
+# file will be included in libHalide.a
 file(MAKE_DIRECTORY "${PROJECT_BINARY_DIR}/${PROJECT_NAME}.build")
 set (CXX_WARNING_FLAGS -Wall -Werror -Wno-unused-function -Wcast-qual)
 set (INITMOD_PREFIX "_initmod_")
 set (ARCHS 32 64)
+
+# Create an empty list for the generated .cpp files
 set(INITIAL_MODULES )
+
 foreach (i ${RUNTIME_CPP} )
   foreach (j ${ARCHS} )
-    # -m64 isn't respected unless we also use a 64-bit target.
-    IF (ARCHS EQUAL 32)
-      set(TARGET "i386-unknown-unknown-unknown")
-    ELSE()
-      set(TARGET "x86_64-unknown-unknown-unknown")
-    ENDIF()
-    set(SOURCE "${NATIVE_RUNTIME_DIR}${i}.cpp")
-    set(LL_D "${PROJECT_BINARY_DIR}/${PROJECT_NAME}.build/${NATIVE_INT_DIR}initmod.${i}_${j}_debug.ll")
-    set(LL "${PROJECT_BINARY_DIR}/${PROJECT_NAME}.build/${NATIVE_INT_DIR}initmod.${i}_${j}.ll")
-    set(BC_D "${PROJECT_BINARY_DIR}/${PROJECT_NAME}.build/${NATIVE_INT_DIR}initmod.${i}_${j}_debug.bc")
-    set(BC "${PROJECT_BINARY_DIR}/${PROJECT_NAME}.build/${NATIVE_INT_DIR}initmod.${i}_${j}.bc")
-    set(INITMOD_D "${INITMOD_PREFIX}${i}_${j}_debug.cpp")
-    set(INITMOD "${INITMOD_PREFIX}${i}_${j}.cpp")
 
-    add_custom_command(OUTPUT "${LL_D}"
-                       DEPENDS "${SOURCE}"
-                       COMMAND ${CLANG} ${CXX_WARNING_FLAGS} ${RUNTIME_DEBUG_FLAG} -DDEBUG_RUNTIME -fno-ms-compatibility -ffreestanding -fno-blocks -fno-exceptions -m${j} -target "${TARGET}" "-I${NATIVE_RUNTIME_DIR}" -DCOMPILING_HALIDE_RUNTIME "-DLLVM_VERSION=${LLVM_VERSION}" -DBITS_${j} -emit-llvm -S "${SOURCE}" -o "${LL_D}"
-                       COMMENT "${SOURCE} -> ${LL_D}")
-    add_custom_command(OUTPUT "${LL}"
-                       DEPENDS "${SOURCE}"
-                       COMMAND ${CLANG} ${CXX_WARNING_FLAGS} -fno-ms-compatibility -ffreestanding -fno-blocks -fno-exceptions -m${j} -target "${TARGET}" "-I${NATIVE_RUNTIME_DIR}" -DCOMPILING_HALIDE_RUNTIME "-DLLVM_VERSION=${LLVM_VERSION}" -DBITS_${j} -emit-llvm -S "${SOURCE}" -o "${LL}"
-                       COMMENT "${SOURCE} -> ${LL}")
+    set(source "${NATIVE_RUNTIME_DIR}${i}.cpp")
+    halide_runtime_module(${INITMOD_PREFIX} ${source} ${j} INITIAL_MODULES "-DCOMPILING_HALIDE_RUNTIME")
 
-    add_custom_command(OUTPUT "${BC_D}"
-                       DEPENDS "${LL_D}"
-                       COMMAND "${LLVM_AS}" "${LL_D}" -o "${BC_D}"
-                       COMMENT "${LL_D} -> ${BC_D}")
-    add_custom_command(OUTPUT "${BC}"
-                       DEPENDS "${LL}"
-                       COMMAND "${LLVM_AS}" "${LL}" -o "${BC}"
-                       COMMENT "${LL} -> ${BC}")
-
-    add_custom_command(OUTPUT "${INITMOD_D}"
-                       DEPENDS "${BC_D}"
-                       COMMAND bitcode2cpp "${i}_${j}_debug" < "${BC_D}" > "${INITMOD_D}"
-                       COMMENT "${BC_D} -> ${INITMOD_D}")
-    add_custom_command(OUTPUT "${INITMOD}"
-                       DEPENDS "${BC}"
-                       COMMAND bitcode2cpp "${i}_${j}" < "${BC}" > "${INITMOD}"
-                       COMMENT "${BC} -> ${INITMOD}")
-    list(APPEND INITIAL_MODULES ${INITMOD})
-    list(APPEND INITIAL_MODULES ${INITMOD_D})
   endforeach()
 endforeach()
+
+# Compile platform and arch specific .ll files and add them to the initial
+# modules list. Unlike the runtime modules above, Debug and Release versions of
+# these modules are not produced.
 foreach (i ${RUNTIME_LL} )
   set(LL "${NATIVE_RUNTIME_DIR}${i}.ll")
   set(BC "${PROJECT_BINARY_DIR}/${PROJECT_NAME}.build/${NATIVE_INT_DIR}initmod.${i}.bc")
@@ -202,6 +175,8 @@ foreach (i ${RUNTIME_LL} )
                      COMMENT "${BC} -> ${INITMOD}")
   list(APPEND INITIAL_MODULES "${INITMOD}")
 endforeach()
+
+# Add other platform specific bitcode files
 foreach (i ${RUNTIME_BC} )
   set(INITMOD "${INITMOD_PREFIX}ptx_${i}.cpp")
   add_custom_command(OUTPUT "${INITMOD}"

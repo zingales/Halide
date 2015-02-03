@@ -1,0 +1,42 @@
+<style>
+body {
+  /* Use an off white color to provide contrast around saturated output
+   pixels */
+  background-color: rgb(240,240,250);
+}
+
+/* Highlight error messages */
+.error {
+  color: red;
+}
+
+/* Draw data, like printed images with a small font. */
+.data {
+  font-size: 4pt;
+}
+</style>
+
+Welcome to Halide testing on iOS!<br>
+
+<script type="text/javascript">
+
+// These variables are used to configure app behavior. They are read by the app
+// after the page loads.
+
+// String containing a list of comma deliminated symbol names to be loaded and
+// executed by the app.
+var AppTestSymbols = "test_example_generator";
+
+// This function appends the specified html string at the end of the document it
+// is similar to the -[AppDelegate echo:] function that the app uses to log
+// output.
+function echo(msg) {
+  var body = document.getElementsByTagName("body")[0];
+  var node = document.createElement("span");
+  node.innerHTML = msg + '<br>';
+  body.appendChild(node);
+}
+
+</script>
+
+<!-- The test function will append content here via halide_print(..) -->

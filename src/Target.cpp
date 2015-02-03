@@ -720,8 +720,6 @@ llvm::Module *get_initial_module_for_target(Target t, llvm::LLVMContext *c, bool
         module_type = ModuleAOT;
     }
 
-    //    Halide::Internal::debug(0) << "Getting initial module type " << (int)module_type << "\n";
-
     internal_assert(t.bits == 32 || t.bits == 64);
     // NaCl always uses the 32-bit runtime modules, because pointers
     // and size_t are 32-bit in 64-bit NaCl, and that's the only way
