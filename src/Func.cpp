@@ -735,7 +735,7 @@ void reorder_vars(vector<Dim> &dims_old, const VarOrRVar *vars, size_t size, con
         user_assert(found)
             << "In schedule for " << stage.name()
             << ", could not find var " << vars[i].name()
-            << " to reorder in the argumemt list.\n"
+            << " to reorder in the argument list.\n"
             << stage.dump_argument_list();
     }
 
@@ -2361,11 +2361,11 @@ struct JITFuncCallContext {
 }  // namespace Internal
 
 void Func::realize(Realization dst, const Target &target) {
-    if (!compiled_module.jit_wrapper_function()) {
+    if (!compiled_module.argv_function()) {
         compile_jit(target);
     }
 
-    internal_assert(compiled_module.jit_wrapper_function());
+    internal_assert(compiled_module.argv_function());
 
     // Check the type and dimensionality of the buffer
     for (size_t i = 0; i < dst.size(); i++) {
@@ -2418,7 +2418,7 @@ void Func::realize(Realization dst, const Target &target) {
     // (If there is a user-set error handler, it will be called as well.)
 
     Internal::debug(2) << "Calling jitted function\n";
-    int exit_status = compiled_module.jit_wrapper_function()(&(arg_values[0]));
+    int exit_status = compiled_module.argv_function()(&(arg_values[0]));
     Internal::debug(2) << "Back from jitted function. Exit status was " << exit_status << "\n";
 
     // TODO: Remove after Buffer is sorted out.
@@ -2434,11 +2434,11 @@ void Func::infer_input_bounds(Buffer dst) {
 }
 
 void Func::infer_input_bounds(Realization dst) {
-    if (!compiled_module.jit_wrapper_function()) {
+    if (!compiled_module.argv_function()) {
         compile_jit();
     }
 
-    internal_assert(compiled_module.jit_wrapper_function());
+    internal_assert(compiled_module.argv_function());
 
     JITFuncCallContext jit_context(jit_handlers, jit_user_context);
 
@@ -2511,7 +2511,7 @@ void Func::infer_input_bounds(Realization dst) {
             old_buffer[j] = *tracked_buffers[j];
         }
         Internal::debug(2) << "Calling jitted function\n";
-        int exit_status = compiled_module.jit_wrapper_function()(&(arg_values[0]));
+        int exit_status = compiled_module.argv_function()(&(arg_values[0]));
 
         jit_context.report_if_error(exit_status);
 

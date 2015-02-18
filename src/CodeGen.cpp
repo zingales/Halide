@@ -303,7 +303,7 @@ void CodeGen::compile(Stmt stmt, string name,
     verifyFunction(*function);
 
     // Now we need to make the wrapper function (useful for calling from jit)
-    string wrapper_name = name + "_jit_wrapper";
+    string wrapper_name = name + "_argv";
     func_t = FunctionType::get(i32, vec<llvm::Type *>(i8->getPointerTo()->getPointerTo()), false);
     llvm::Function *wrapper = llvm::Function::Create(func_t, llvm::Function::ExternalLinkage, wrapper_name, module);
     block = BasicBlock::Create(*context, "entry", wrapper);
@@ -361,8 +361,14 @@ void CodeGen::optimize_module() {
 
     debug(3) << "Optimizing module\n";
 
+    #if LLVM_VERSION < 37
     FunctionPassManager function_pass_manager(module);
     PassManager module_pass_manager;
+    #else
+    legacy::FunctionPassManager function_pass_manager(module);
+    legacy::PassManager module_pass_manager;
+    #endif
+
 
     #if LLVM_VERSION >= 36
     internal_assert(module->getDataLayout()) << "Optimizing module with no data layout, probably will crash in LLVM.\n";
@@ -474,7 +480,11 @@ void CodeGen::compile_to_native(const string &filename, bool assembly) {
     formatted_raw_ostream out(raw_out);
 
     // Build up all of the passes that we want to do to the module.
+    #if LLVM_VERSION < 37
     PassManager pass_manager;
+    #else
+    legacy::PassManager pass_manager;
+    #endif
 
     #if LLVM_VERSION < 37
     // Add an appropriate TargetLibraryInfo pass for the module's triple.
@@ -486,7 +496,7 @@ void CodeGen::compile_to_native(const string &filename, bool assembly) {
     #if LLVM_VERSION < 33
     pass_manager.add(new TargetTransformInfo(target_machine->getScalarTargetTransformInfo(),
                                              target_machine->getVectorTargetTransformInfo()));
-    #else
+    #elif LLVM_VERSION < 37
     target_machine->addAnalysisPasses(pass_manager);
     #endif
 
@@ -500,7 +510,11 @@ void CodeGen::compile_to_native(const string &filename, bool assembly) {
     pass_manager.add(createAlwaysInlinerPass());
 
     // Override default to generate verbose assembly.
+    #if LLVM_VERSION < 37
     target_machine->setAsmVerbosityDefault(true);
+    #else
+    target_machine->Options.MCOptions.AsmVerbose = true;
+    #endif
 
     // Ask the target to add backend passes as necessary.
     TargetMachine::CodeGenFileType file_type =
