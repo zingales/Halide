@@ -53,7 +53,6 @@ add_executable(test_osx MACOSX_BUNDLE
 # symbols explicitly so we have to make sure that the linker does
 # not remove them from the executable.
 set(exported_symbols "-Xlinker -exported_symbol -Xlinker _${generator_func}")
-set(exported_symbols "${exported_symbols} -Xlinker -exported_symbol -Xlinker _${generator_func}_jit_wrapper")
 
 # Export the test symbols
 set(exported_symbols "${exported_symbols} -Xlinker -exported_symbol -Xlinker _test_example_generator")

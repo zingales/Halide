@@ -67,35 +67,35 @@ function(halide_runtime_module prefix source arch output_cpp_list)
   set(ll_cmd_line ${CXX_WARNING_FLAGS} -fno-ms-compatibility -ffreestanding -fno-blocks -fno-exceptions -m${arch} -target "${TARGET}" "-DLLVM_VERSION=${LLVM_VERSION}" -DBITS_${arch} -emit-llvm -S "${source}" ${ARGN})
 
   add_custom_command(OUTPUT "${LL_D}"
-  DEPENDS "${source}"
-  COMMAND ${CLANG}  ${RUNTIME_DEBUG_FLAG} -DDEBUG_RUNTIME ${ll_cmd_line} -o "${LL_D}"
-  COMMENT "${source} -> ${LL_D}")
+    DEPENDS "${source}"
+    COMMAND ${CLANG}  ${RUNTIME_DEBUG_FLAG} -DDEBUG_RUNTIME ${ll_cmd_line} -o "${LL_D}"
+    COMMENT "${source} -> ${LL_D}")
 
   add_custom_command(OUTPUT "${LL}"
-  DEPENDS "${source}"
-  COMMAND ${CLANG} ${ll_cmd_line} -o "${LL}"
-  COMMENT "${source} -> ${LL}")
+    DEPENDS "${source}"
+    COMMAND ${CLANG} ${ll_cmd_line} -o "${LL}"
+    COMMENT "${source} -> ${LL}")
 
   # Assemble the .ll files into .bc files.
   add_custom_command(OUTPUT "${BC_D}"
-  DEPENDS "${LL_D}"
-  COMMAND "${LLVM_AS}" "${LL_D}" -o "${BC_D}"
-  COMMENT "${LL_D} -> ${BC_D}")
+    DEPENDS "${LL_D}"
+    COMMAND "${LLVM_AS}" "${LL_D}" -o "${BC_D}"
+    COMMENT "${LL_D} -> ${BC_D}")
   add_custom_command(OUTPUT "${BC}"
-  DEPENDS "${LL}"
-  COMMAND "${LLVM_AS}" "${LL}" -o "${BC}"
-  COMMENT "${LL} -> ${BC}")
+    DEPENDS "${LL}"
+    COMMAND "${LLVM_AS}" "${LL}" -o "${BC}"
+    COMMENT "${LL} -> ${BC}")
 
   # Run the bitcode2cpp program to encode the .bc files into extern unsigned
   # char[] symbols in .cpp files.
   add_custom_command(OUTPUT "${INITMOD_D}"
-  DEPENDS "${BC_D}"
-  COMMAND bitcode2cpp "${name}_${arch}_debug" < "${BC_D}" > "${INITMOD_D}"
-  COMMENT "${BC_D} -> ${INITMOD_D}")
+    DEPENDS "${BC_D}"
+    COMMAND bitcode2cpp "${name}_${arch}_debug" < "${BC_D}" > "${INITMOD_D}"
+    COMMENT "${BC_D} -> ${INITMOD_D}")
   add_custom_command(OUTPUT "${INITMOD}"
-  DEPENDS "${BC}"
-  COMMAND bitcode2cpp "${name}_${arch}" < "${BC}" > "${INITMOD}"
-  COMMENT "${BC} -> ${INITMOD}")
+    DEPENDS "${BC}"
+    COMMAND bitcode2cpp "${name}_${arch}" < "${BC}" > "${INITMOD}"
+    COMMENT "${BC} -> ${INITMOD}")
 
   # Add the generated cpp files to the output list
   set(${output_cpp_list} ${${output_cpp_list}} ${INITMOD} ${INITMOD_D} PARENT_SCOPE)

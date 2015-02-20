@@ -1,0 +1,95 @@
+<!-- This file contains the HTML and JavaScript infastructure for displaying the
+     results of a Halide test function. The test comments, input and output
+     images, etc. are programmed in the test function rather than this HTML
+     page. -->
+
+<!DOCTYPE html>
+<html>
+<head>
+<title>Halide Testing</title>
+
+<style>
+body {
+  /* Use an off white color to provide contrast around saturated output
+   pixels */
+  background-color: rgb(240,240,250);
+}
+
+/* Highlight error messages */
+.error {
+  color: red;
+}
+
+/* Draw data, like printed images with a small font. */
+.data {
+  font-size: 4pt;
+}
+
+/* Outline displayed images so that their extent is clearly defined. */
+.output {
+  border-style: solid;
+  border-width: 5px;
+}
+</style>
+
+<script type="text/javascript">
+
+// This function appends the specified html string or ArrayData object
+function echo(msg) {
+
+  // Check if the incoming message appears to be a test image object
+  if ((typeof msg == "object") && (msg.width > 0)) {
+    // Draw the image data into a canvas
+    var canvas = document.createElement('canvas');
+    canvas.width = msg.width;
+    canvas.height = msg.height;
+    canvas.className = 'output';
+
+    // Wrap the data in an image data object
+    var context = canvas.getContext('2d');
+    var imageData = context.createImageData(canvas.width, canvas.height);
+    imageData.data.set(new Uint8ClampedArray(msg.host));
+
+    context.putImageData(imageData, 0, 0);
+
+    // Add the canvas to the page body
+    var body = document.getElementsByTagName("body")[0];
+    body.appendChild(canvas);
+
+  } else {
+    // Add the string to the message body
+    var body = document.getElementsByTagName("body")[0];
+    var node = document.createElement("span");
+    node.innerHTML = msg + '<br>';
+    body.appendChild(node);
+  }
+}
+
+// Pass messages from the PNACL instance to the echo function defined above.
+// This function provides equivalent functionality on each of the testing
+// platforms.
+function handleMessage(message_event) {
+  echo(message_event.data);
+}
+
+</script>
+</head>
+
+<body>
+Welcome to Halide testing!<br>
+
+<div id="listener">
+<script type="text/javascript">
+var listener = document.getElementById('listener');
+listener.addEventListener('message', handleMessage, true);
+</script>
+
+<!-- Invoke the test pnacl test module. The module will send output and results
+     back through the message handler above.-->
+<embed id="halide_module" width=0 height=0 src="test_pnacl.nmf" type="application/x-pnacl" />
+</div>
+</p>
+
+<!-- The test function will append content here via halide_print(..) -->
+</body>
+</html>
