@@ -57,6 +57,8 @@ bool test_example_generator() {
 
   example(runtime_factor,&g);
 
+  halide_copy_to_host(NULL,&g);
+
   int errors = 0;
   for (int c = 0; c < C; c++) {
     for (int y = 0; y < N; y++) {

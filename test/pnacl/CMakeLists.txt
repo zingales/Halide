@@ -51,9 +51,9 @@ set_target_properties(example PROPERTIES
   XCODE_ATTRIBUTE_GCC_ENABLE_CPP_RTTI NO
   )
 
-# Add a build step to call the generator, not that so far we have not added a
+# Add a build step to call the generator, note that so far we have not added a
 # test_nacl target to the project.
-halide_add_generator_dependency(test_pnacl example example example target=pnacl-32-nacl)
+halide_add_generator_dependency(test_pnacl example example example target=pnacl-32-nacl-opengl)
 
 # Determine PNACL SDK environment
 set(NACL_SDK_ROOT "" CACHE PATH "Full path to the nacl_sdk directory")
@@ -87,7 +87,7 @@ add_custom_command(OUTPUT ${out_dir}/test_example_generator.bc
 # Add a build step to generate a .pexe target
 add_custom_target(test_pnacl
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-  COMMAND ${nacl_toolchain}/bin/pnacl-clang++ -o ${out_dir}/test_pnacl.pexe ${out_dir}/main.bc ${out_dir}/test_example_generator.bc ${out_dir}/example.bc -O2 ${nacl_linker_flags} -lppapi_cpp -lppapi
+  COMMAND ${nacl_toolchain}/bin/pnacl-clang++ -o ${out_dir}/test_pnacl.pexe ${out_dir}/main.bc ${out_dir}/test_example_generator.bc ${out_dir}/example.bc -O2 ${nacl_linker_flags} -lppapi_cpp -lppapi -lppapi_gles2
   COMMAND ${nacl_toolchain}/bin/pnacl-finalize -o ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/test_pnacl.pexe ${out_dir}/test_pnacl.pexe
   COMMAND cp index.html ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/
   COMMAND cp test_pnacl.nmf ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/
@@ -96,6 +96,7 @@ add_custom_target(test_pnacl
           ${out_dir}/example.bc
           index.html
           test_pnacl.nmf
+          exec_generator_example_example
   SOURCES main.cpp
           index.html
           test_pnacl.nmf

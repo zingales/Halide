@@ -68,8 +68,7 @@ extern "C" int isdigit(int c);
     GLFUNC(PFNGLPIXELSTOREIPROC, PixelStorei);                          \
     GLFUNC(PFNGLREADPIXELS, ReadPixels);                                \
     GLFUNC(PFNGLGETSTRINGPROC, GetString);                              \
-    GLFUNC(PFNGLGETINTEGERV, GetIntegerv);                              \
-    GLFUNC(PFNGLGETSTRINGI, GetStringi)
+    GLFUNC(PFNGLGETINTEGERV, GetIntegerv);
 
 // ---------- Types ----------
 
@@ -227,8 +226,15 @@ WEAK void debug_buffer(void *user_context, buffer_t *buf) {
 WEAK GLuint make_shader(void *user_context, GLenum type,
                         const char *source, GLint *length) {
 
-    debug(user_context) << "SHADER SOURCE:\n"
+#ifdef DEBUG_RUNTIME
+    // Output the shader source with a larger statically sized printer
+    // TODO: The debug(..) printer should changed to handle dynamically sized
+    // output
+    Printer<BasicPrinter,4*1024>(user_context)
+                        << ((type == GL_VERTEX_SHADER) ? "GL_VERTEX_SHADER" : "GL_FRAGMENT_SHADER")
+                        << " SOURCE:\n"
                         << source << "\n";
+#endif
 
     GLuint shader = ST.CreateShader(type);
     CHECK_GLERROR(1);
@@ -303,6 +309,9 @@ WEAK Argument *parse_argument(void *user_context, const char *src,
     return arg;
 }
 
+  extern "C" int
+  printf(const char * format, ...);
+
 // Create KernelInfo for a piece of GLSL code
 WEAK KernelInfo *create_kernel(void *user_context, const char *src, int size) {
     KernelInfo *kernel = (KernelInfo *)malloc(sizeof(KernelInfo));
@@ -311,29 +320,7 @@ WEAK KernelInfo *create_kernel(void *user_context, const char *src, int size) {
     kernel->arguments = NULL;
     kernel->program_id = 0;
 
-    #ifdef DEBUG_RUNTIME
-    {
-        // Android logcat output clips at ~1000 character chunks by default;
-        // to avoid clipping the interesting stuff, emit a line at a time.
-        // This is less efficient, but it's DEBUG-only.
-        debug(user_context) << "Compiling GLSL kernel (size = " << size << "):\n";
-        const int kBufSize = 255;
-        char buf[kBufSize + 1];
-        const char* s = src;
-        int d = 0;
-        while (s < src + size) {
-            while (*s != '\n' && *s != '\0' && d < kBufSize) {
-                buf[d++] = *s++;
-            }
-            buf[d++] = '\0';
-            debug(user_context) << buf << "\n";
-            d = 0;
-            while (*s == '\n' || *s == '\0') {
-                s++;
-            }
-        }
-    }
-    #endif
+    debug(user_context) << "Compiling GLSL kernel (size = " << size << "):\n";
 
     // Parse initial comment block
     const char *line = kernel->source;
@@ -455,30 +442,22 @@ WEAK int load_gl_func(void *user_context, const char *name, void **ptr) {
 }
 
 WEAK bool extension_supported(void *user_context, const char *name) {
-    if (ST.major_version >= 3) {
-        GLint num_extensions = 0;
-        ST.GetIntegerv(GL_NUM_EXTENSIONS, &num_extensions);
-        for (int i = 0; i < num_extensions; i++) {
-            const char *ext = (const char *)ST.GetStringi(GL_EXTENSIONS, i);
-            if (strcmp(ext, name) == 0) {
-                return true;
-            }
-        }
-    } else {
-        const char *start = (const char *)ST.GetString(GL_EXTENSIONS);
-        if (!start) {
-            return false;
-        }
-        while (const char *pos = strstr(start, name)) {
-            const char *end = pos + strlen(name);
-            // Ensure the found match is a full word, not a substring.
-            if ((pos == start || pos[-1] == ' ') &&
-                (*end == ' ' || *end == '\0')) {
-                return true;
-            }
-            start = end;
-        }
+    // Iterate over space delimited extension strings. Note that glGetStringi
+    // is not part of GL ES 2.0
+    const char *start = (const char *)ST.GetString(GL_EXTENSIONS);
+    if (!start) {
+        return false;
     }
+    while (const char *pos = strstr(start, name)) {
+        const char *end = pos + strlen(name);
+        // Ensure the found match is a full word, not a substring.
+        if ((pos == start || pos[-1] == ' ') &&
+            (*end == ' ' || *end == '\0')) {
+            return true;
+        }
+        start = end;
+    }
+
     return false;
 }
 
@@ -893,7 +872,7 @@ WEAK int halide_opengl_init_kernels(void *user_context, void **state_ptr,
         // vertex expressions interpolated by varying attributes are evaluated
         // by host code on the CPU and passed to the GPU as values in the
         // vertex buffer.
-        enum { PrinterLength = 1024*256 };
+        enum { PrinterLength = 1024*4 };
         Printer<StringStreamPrinter,PrinterLength> vertex_src(user_context);
 
         // Count the number of varying attributes, this is 2 for the spatial
@@ -912,7 +891,7 @@ WEAK int halide_opengl_init_kernels(void *user_context, void **state_ptr,
             vertex_src << "attribute vec4 _varyingf" << i << "_attrib;\n";
             vertex_src << "varying   vec4 _varyingf" << i << ";\n";
         }
-        
+
         vertex_src << "uniform ivec2 output_min;\n"
                    << "uniform ivec2 output_extent;\n"
                    << "void main() {\n"

@@ -642,7 +642,8 @@ void CodeGen_GLSL::compile(Stmt stmt, string name,
     // versions (desktop GL, GLES2, GLES3, ...), probably by making it part of
     // Target.
     bool opengl_es = (target.os == Target::Android ||
-                      target.os == Target::IOS);
+                      target.os == Target::IOS ||
+                      target.os == Target::NaCl);
 
     // Specify default float precision when compiling for OpenGL ES.
     // TODO: emit correct #version

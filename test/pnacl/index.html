@@ -60,7 +60,7 @@ function echo(msg) {
     // Add the string to the message body
     var body = document.getElementsByTagName("body")[0];
     var node = document.createElement("span");
-    node.innerHTML = msg + '<br>';
+    node.innerHTML = '<pre>' + msg + '</pre>';
     body.appendChild(node);
   }
 }
