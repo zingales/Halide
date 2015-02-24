@@ -19,6 +19,10 @@
 
 #include <HalideRuntime.h>
 
+#include <GLES2/gl2.h>
+#include "ppapi/lib/gl/gles2/gl2ext_ppapi.h"
+#include "ppapi/cpp/graphics_3d.h"
+
 using namespace pp;
 
 static Instance *inst = NULL;
@@ -29,10 +33,12 @@ static Instance *inst = NULL;
 extern "C" bool TEST_SYMBOL ();
 
 extern "C" void halide_error(void */* user_context */, const char *msg) {
+    printf("%s\n",msg);
     inst->PostMessage(msg);
 }
 
 extern "C" void halide_print(void */* user_context */, const char *msg) {
+    printf("%s\n",msg);
     inst->PostMessage(msg);
 }
 
@@ -165,3 +171,95 @@ namespace pp {
         return new HalideModule();
     }
 }  // namespace pp
+
+extern "C" void *halide_opengl_get_proc_address(void *user_context, const char *name_cstr) {
+
+  // All of these symbols are defined in the global namespace, but pnacl does
+  // not support dlsym, so we string compare and return the appropriate pointer
+  // using the symbol name.
+  std::string name = name_cstr;
+
+#define GLFUNC(dec,def) \
+  if (name == std::string("gl" #def)) {\
+  return (void*)gl##def;\
+}
+  GLFUNC(PFNGLDELETETEXTURESPROC, DeleteTextures);
+  GLFUNC(PFNGLGENTEXTURESPROC, GenTextures);
+  GLFUNC(PFNGLBINDTEXTUREPROC, BindTexture);
+  GLFUNC(PFNGLGETERRORPROC, GetError);
+  GLFUNC(PFNGLVIEWPORTPROC, Viewport);
+  GLFUNC(PFNGLGENBUFFERSPROC, GenBuffers);
+  GLFUNC(PFNGLDELETEBUFFERSPROC, DeleteBuffers);
+  GLFUNC(PFNGLBINDBUFFERPROC, BindBuffer);
+  GLFUNC(PFNGLBUFFERDATAPROC, BufferData);
+  GLFUNC(PFNGLTEXPARAMETERIPROC, TexParameteri);
+  GLFUNC(PFNGLTEXIMAGE2DPROC, TexImage2D);
+  GLFUNC(PFNGLTEXSUBIMAGE2DPROC, TexSubImage2D);
+  GLFUNC(PFNGLDISABLEPROC, Disable);
+  GLFUNC(PFNGLCREATESHADERPROC, CreateShader);
+  GLFUNC(PFNGLACTIVETEXTUREPROC, ActiveTexture);
+  GLFUNC(PFNGLSHADERSOURCEPROC, ShaderSource);
+  GLFUNC(PFNGLCOMPILESHADERPROC, CompileShader);
+  GLFUNC(PFNGLGETSHADERIVPROC, GetShaderiv);
+  GLFUNC(PFNGLGETSHADERINFOLOGPROC, GetShaderInfoLog);
+  GLFUNC(PFNGLDELETESHADERPROC, DeleteShader);
+  GLFUNC(PFNGLCREATEPROGRAMPROC, CreateProgram);
+  GLFUNC(PFNGLATTACHSHADERPROC, AttachShader);
+  GLFUNC(PFNGLLINKPROGRAMPROC, LinkProgram);
+  GLFUNC(PFNGLGETPROGRAMIVPROC, GetProgramiv);
+  GLFUNC(PFNGLGETPROGRAMINFOLOGPROC, GetProgramInfoLog);
+  GLFUNC(PFNGLUSEPROGRAMPROC, UseProgram);
+  GLFUNC(PFNGLDELETEPROGRAMPROC, DeleteProgram);
+  GLFUNC(PFNGLGETUNIFORMLOCATIONPROC, GetUniformLocation);
+  GLFUNC(PFNGLUNIFORM1IVPROC, Uniform1iv);
+  GLFUNC(PFNGLUNIFORM2IVPROC, Uniform2iv);
+  GLFUNC(PFNGLUNIFORM2IVPROC, Uniform4iv);
+  GLFUNC(PFNGLUNIFORM1FVPROC, Uniform1fv);
+  GLFUNC(PFNGLUNIFORM1FVPROC, Uniform4fv);
+  GLFUNC(PFNGLGENFRAMEBUFFERSPROC, GenFramebuffers);
+  GLFUNC(PFNGLDELETEFRAMEBUFFERSPROC, DeleteFramebuffers);
+  GLFUNC(PFNGLCHECKFRAMEBUFFERSTATUSPROC, CheckFramebufferStatus);
+  GLFUNC(PFNGLBINDFRAMEBUFFERPROC, BindFramebuffer);
+  GLFUNC(PFNGLFRAMEBUFFERTEXTURE2DPROC, FramebufferTexture2D);
+  GLFUNC(PFNGLGETATTRIBLOCATIONPROC, GetAttribLocation);
+  GLFUNC(PFNGLVERTEXATTRIBPOINTERPROC, VertexAttribPointer);
+  GLFUNC(PFNGLDRAWELEMENTSPROC, DrawElements);
+  GLFUNC(PFNGLENABLEVERTEXATTRIBARRAYPROC, EnableVertexAttribArray);
+  GLFUNC(PFNGLDISABLEVERTEXATTRIBARRAYPROC, DisableVertexAttribArray);
+  GLFUNC(PFNGLPIXELSTOREIPROC, PixelStorei);
+  GLFUNC(PFNGLREADPIXELS, ReadPixels);
+  GLFUNC(PFNGLGETSTRINGPROC, GetString);
+  GLFUNC(PFNGLGETINTEGERV, GetIntegerv);
+
+  return NULL;
+}
+
+// This function must be define in the client app because the pp::Instance
+// object is needed to create a pp::Graphics3D context.
+extern "C" int halide_opengl_create_context(void *user_context) {
+
+  if (!glInitializePPAPI(pp::Module::Get()->get_browser_interface())) {
+    halide_error(user_context, "Unable to initialize GL PPAPI!\n");
+    return -1;
+  }
+
+  const int32_t attrib_list[] = {
+    PP_GRAPHICS3DATTRIB_RED_SIZE, 8,
+    PP_GRAPHICS3DATTRIB_GREEN_SIZE, 8,
+    PP_GRAPHICS3DATTRIB_BLUE_SIZE, 8,
+    PP_GRAPHICS3DATTRIB_ALPHA_SIZE, 8,
+
+    // The default width and height are both zero, and if we use that value
+    // renderbuffer creation on the context will fail. The off screen buffer
+    // does not fail if we pass a non-zero value.
+    PP_GRAPHICS3DATTRIB_WIDTH, 1,
+    PP_GRAPHICS3DATTRIB_HEIGHT, 1,
+    PP_GRAPHICS3DATTRIB_NONE
+  };
+
+  // Create an off screen graphics context for Halide.
+  static Graphics3D context_ = pp::Graphics3D(inst, attrib_list);
+
+  glSetCurrentContextPPAPI(context_.pp_resource());
+  return 0;
+}

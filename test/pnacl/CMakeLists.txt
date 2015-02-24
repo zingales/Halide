@@ -106,6 +106,7 @@ add_custom_target(test_pnacl
           example
           exec_generator_example_example
           exec_generator_example_example_glsl
+
   SOURCES main.cpp
           index.html
           test_pnacl.nmf
