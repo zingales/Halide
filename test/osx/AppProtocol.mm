@@ -9,7 +9,6 @@
 #import "AppProtocol.h"
 
 #include "AppDelegate.h"
-#include "BufferT.h"
 
 #include <dlfcn.h>
 

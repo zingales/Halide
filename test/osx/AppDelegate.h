@@ -5,8 +5,6 @@
 
 #import <Cocoa/Cocoa.h>
 
-#import "BufferT.h"
-
 @interface AppDelegate : NSObject <NSApplicationDelegate>
 
 @property (retain) NSMutableDictionary* database;

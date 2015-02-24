@@ -5,16 +5,11 @@
 //  Created by abstephens on 1/22/15.
 //
 //
-
 #import "AppProtocol.h"
-
 #import "AppDelegate.h"
-#import "BufferT.h"
 #import "ViewController.h"
-
-#include <dlfcn.h>
-
-#include "HalideRuntime.h"
+#import "HalideRuntime.h"
+#import <dlfcn.h>
 
 NSString* kAppProtocolURLScheme = @"app";
 

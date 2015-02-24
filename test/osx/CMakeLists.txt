@@ -39,7 +39,7 @@ set(resources
 add_executable(test_osx MACOSX_BUNDLE
   main.m
   AppDelegate.h
-  AppDelegate.m
+  AppDelegate.mm
   AppProtocol.h
   AppProtocol.mm
   ../generator/test_example_generator.cpp

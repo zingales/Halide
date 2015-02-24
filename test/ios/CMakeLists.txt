@@ -51,7 +51,7 @@ add_executable(test_ios MACOSX_BUNDLE
   ../generator/test_example_generator.cpp
   main.m
   ViewController.h
-  ViewController.m
+  ViewController.mm
   ${RESOURCES}
   )
 
@@ -78,7 +78,7 @@ set_target_properties(test_ios PROPERTIES
   # the suffix of the variable name. Here we set some default values of iOS app
   # development
   XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "${HALIDE_IOS_CODE_SIGNING_IDENTITY}"
-  XCODE_ATTRIBUTE_DEBUG_INFORMATION_FORMAT "dwarf-with-dsym"
+  XCODE_ATTRIBUTE_DEBUG_INFORMATION_FORMAT "dwarf"
   XCODE_ATTRIBUTE_INFOPLIST_PREPROCESS YES
   XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET 8.0
   XCODE_ATTRIBUTE_VALID_ARCHS "arm64 armv7 armv7s x86_64"

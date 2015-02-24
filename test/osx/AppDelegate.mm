@@ -1,17 +1,18 @@
 //
-//  ViewController.m
-//  test_ios
+//  AppDelegate.m
 //
-//  Created by abstephens on 1/20/15.
-//
+//  Created by abstephens on 1/21/15.
+//  Copyright (c) 2015 Google. All rights reserved.
 //
 
-#import "ViewController.h"
-#import "AppDelegate.h"
-#import "AppProtocol.h"
-#import "BufferT.h"
+#import <WebKit/WebKit.h>
+#import <JavaScriptCore/JavaScriptCore.h>
 
 #import <dlfcn.h>
+
+#import "AppDelegate.h"
+#import "AppProtocol.h"
+#import "HalideRuntime.h"
 
 // Test functions are loaded from the app process using a set of strings
 // encoded in the loaded HTML page. These functions take no arguments and return
@@ -19,44 +20,73 @@
 // wired up to output in the WebView.
 typedef int (*test_function_t)(void);
 
-@implementation ViewController
+@interface AppDelegate ()
+@property (retain) NSWindow *window;
+@property (retain) WebView *outputView;
+@end
 
-- (instancetype)init {
+@implementation AppDelegate
+
+- (instancetype)init
+{
   self = [super init];
   if (self) {
-    _outputView = [[UIWebView alloc] initWithFrame:CGRectZero];
-
-    // Enable zooming in and out of content
-    _outputView.scalesPageToFit = YES;
+    _window = [[NSWindow alloc] init];
+    _outputView = [[WebView alloc] init];
+    _database = [[NSMutableDictionary alloc] init];
   }
   return self;
 }
 
-- (void)viewDidLoad {
-  [super viewDidLoad];
+- (void)applicationWillFinishLaunching:(NSNotification *)notification {
 
-  [self.view addSubview:self.outputView];
+  // Setup the application protocol handler
+  [NSURLProtocol registerClass:[AppProtocol class]];
 
-  self.outputView.delegate = self;
+  // Setup a very basic main menu
+  NSMenu *menu = [[NSMenu alloc] initWithTitle:@""];
+  [[NSApplication sharedApplication] setMainMenu:menu];
 
-  NSURL* url = [[NSBundle mainBundle] URLForResource:@"index"
-                                       withExtension:@"html"];
-  [self.outputView loadRequest:[NSURLRequest requestWithURL:url]];
+  NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:@""
+                                                action:nil
+                                         keyEquivalent:@""];
+
+  NSMenu *fileMenu = [[NSMenu alloc] initWithTitle:@"File"];
+
+  [item setSubmenu:fileMenu];
+  [menu addItem:item];
+
+  [fileMenu addItemWithTitle:@"Quit"
+                      action:@selector(terminate:)
+               keyEquivalent:@"q"];
+
+  // Setup the application window
+  [self.window setFrame:CGRectMake(0, 0, 768, 1024) display:NO];
+  [self.window setContentView:self.outputView];
+  [self.window setStyleMask:self.window.styleMask |
+    NSResizableWindowMask |
+    NSClosableWindowMask |
+    NSMiniaturizableWindowMask |
+    NSTitledWindowMask ];
 }
 
-- (void)viewWillLayoutSubviews {
+- (void)applicationDidFinishLaunching:(NSNotification *)aNotification {
 
-  self.outputView.frame = self.view.frame;
+  // Setup the main menu
+  [self.window makeKeyAndOrderFront:self];
 
-  self.view.autoresizingMask = UIViewAutoresizingFlexibleWidth |
-    UIViewAutoresizingFlexibleHeight;
-  self.view.autoresizesSubviews = YES;
+  // Setup the page load delegate
+  self.outputView.frameLoadDelegate = self;
+
+  // Load the test document
+  NSURL* url = [[NSBundle mainBundle] URLForResource:@"index" withExtension:@"html"];
+  [self.outputView.mainFrame loadRequest:[NSURLRequest requestWithURL:url]];
 }
 
-- (void)webViewDidFinishLoad:(UIWebView *)sender
+// This method is called after the main webpage is loaded. It calls the test
+// function that will eventually output to the page via the echo method below.
+- (void)webView:(WebView *)sender didFinishLoadForFrame:(WebFrame *)frame
 {
-  self.database = [NSMutableDictionary dictionary];
-
   // Obtain a comma delimited list of test functions to call
   NSString* names = [sender stringByEvaluatingJavaScriptFromString:@"AppTestSymbols;"];
 
@@ -70,7 +100,7 @@ typedef int (*test_function_t)(void);
   for (NSString* name in [names componentsSeparatedByString:@","]) {
 
     // Attempt to load the symbol
-    test_function_t func = dlsym(RTLD_DEFAULT, name.UTF8String);
+    test_function_t func = (test_function_t)dlsym(RTLD_DEFAULT, name.UTF8String);
     if (!func) {
       [self echo:[NSString stringWithFormat:@"<div class='error'>%@ not found</div>",name]];
       continue;
@@ -81,61 +111,39 @@ typedef int (*test_function_t)(void);
 
     [self echo:[NSString stringWithFormat:@"%@ returned %d",name,result]];
   }
-
 }
 
 // This message appends the specified string, which may contain HTML tags to the
 // document displayed in the webview.
 - (void)echo:(NSString*)message {
-
   NSString* htmlMessage = [message stringByReplacingOccurrencesOfString:@"\n" withString:@"<br>"];
+
   htmlMessage = [NSString stringWithFormat:@"echo(\"%@\");",htmlMessage];
 
   [self.outputView stringByEvaluatingJavaScriptFromString:htmlMessage];
 }
 
-// The Halide runtime will call this function to initialize and make current the
-// intended implementation specific OpenGL context.
-int halide_opengl_create_context(void *user_context) {
+@end
 
-  static EAGLContext* context = nil;
-
-  static dispatch_once_t onceToken;
-  dispatch_once(&onceToken, ^{
-    context = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES2];
-  });
-
-  [EAGLContext setCurrentContext:context];
-
-  return 0;
-}
-
-// This method is called by the Halide runtime to populate a function pointer
-// lookup table. Since there is only one GLES implementation available on iOS
-// we simply forward the lookup to dlsym
-void *halide_opengl_get_proc_address(void *user_context, const char *name)
-{
-  void* symbol = dlsym(RTLD_NEXT,name);
-
-  return symbol;
-}
-
+extern "C"
 void halide_print(void *user_context, const char * message)
 {
-  ViewController* app = (ViewController*)[UIApplication sharedApplication].delegate.window.rootViewController;
+  AppDelegate* app = [NSApp delegate];
   [app echo:[NSString stringWithCString:message encoding:NSUTF8StringEncoding]];
 
   NSLog(@"%s",message);
 }
 
+extern "C"
 void halide_error(void *user_context, const char * message)
 {
-  ViewController* ctrl = (ViewController*)[UIApplication sharedApplication].delegate.window.rootViewController;
-  [ctrl echo:[NSString stringWithFormat:@"<div class='error'>%s</div>",message]];
+  AppDelegate* app = [NSApp delegate];
+  [app echo:[NSString stringWithFormat:@"<div class='error'>%s</div>",message]];
 
   NSLog(@"%s",message);
 }
 
+extern "C"
 int halide_buffer_display(const buffer_t* buffer)
 {
   // Convert the buffer_t to an NSImage
@@ -187,32 +195,33 @@ int halide_buffer_display(const buffer_t* buffer)
                                      NO,
                                      kCGRenderingIntentDefault);
 
-  // Note there is a slight difference in the APIs used here between this
-  // version of halide_buffer_display and the one in the Mac OS X app
-  UIImage* image = [UIImage imageWithCGImage:cgImage];
+  NSImage* image = [[NSImage alloc] initWithCGImage:cgImage size:NSZeroSize];
 
   // Cleanup
   CGImageRelease(cgImage);
   CGColorSpaceRelease(colorSpace);
   CGDataProviderRelease(provider);
 
-  // Convert the image to a PNG
-  NSData* data = UIImagePNGRepresentation(image);
+  // Convert the NSImage to a png
+  NSData* tiffData = [image TIFFRepresentation];
+  NSBitmapImageRep* rep = [NSBitmapImageRep imageRepsWithData:tiffData][0];
+  NSData* data = [rep representationUsingType:NSPNGFileType properties:nil];
 
   // Construct a name for the image resource
   static int counter = 0;
   NSString* url = [NSString stringWithFormat:@"%@:///buffer_t%d",kAppProtocolURLScheme,counter++];
 
   // Add the buffer to the result database
-  ViewController* ctrl = (ViewController*)[UIApplication sharedApplication].delegate.window.rootViewController;
-  ctrl.database[url] = data;
+  AppDelegate* app = [NSApp delegate];
+  app.database[url] = data;
 
   // Load the image through a URL
-  [ctrl echo:[NSString stringWithFormat:@"<img src='%@'></img>",url]];
+  [app echo:[NSString stringWithFormat:@"<img src='%@'></img>",url]];
 
   return 0;
 }
 
+extern "C"
 int halide_buffer_print(const buffer_t* buffer)
 {
   NSMutableArray* output = [NSMutableArray array];
@@ -246,10 +255,9 @@ int halide_buffer_print(const buffer_t* buffer)
   NSString* text = [output componentsJoinedByString:@""];
 
   // Output the buffer as a string
-  ViewController* ctrl = (ViewController*)[UIApplication sharedApplication].delegate.window.rootViewController;
-  [ctrl echo:[NSString stringWithFormat:@"<pre class='data'>%@</pre><br>",text]];
-  
+  AppDelegate* app = [NSApp delegate];
+  [app echo:[NSString stringWithFormat:@"<pre class='data'>%@</pre><br>",text]];
+
   return 0;
 }
 
-@end
