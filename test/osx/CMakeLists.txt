@@ -58,7 +58,7 @@ set(exported_symbols "-Xlinker -exported_symbol -Xlinker _${generator_func}")
 set(exported_symbols "${exported_symbols} -Xlinker -exported_symbol -Xlinker _test_example_generator")
 
 # Other frameworks passed on the link line
-set(frameworks "-framework CoreGraphics -framework Foundation -framework Cocoa -framework WebKit")
+set(frameworks "-framework CoreGraphics -framework Foundation -framework Cocoa -framework WebKit -framework OpenGL -framework AGL")
 
 set_target_properties(test_osx PROPERTIES
   MACOSX_BUNDLE_EXECUTABLE_NAME "\${EXECUTABLE_NAME}"
@@ -110,4 +110,5 @@ set_target_properties(example PROPERTIES
   )
 
 # Add a build step to call the generator
-halide_add_generator_dependency(test_osx example example example -e html target=host)
+halide_add_generator_dependency(test_osx example example example -e html target=host-opengl)
+
