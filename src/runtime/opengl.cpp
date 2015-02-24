@@ -483,7 +483,7 @@ WEAK int load_gl_func(void *user_context, const char *name, void **ptr, bool req
 WEAK bool extension_supported(void *user_context, const char *name) {
     // Iterate over space delimited extension strings. Note that glGetStringi
     // is not part of GL ES 2.0
-    const char *start = (const char *)ST.GetString(GL_EXTENSIONS);
+    const char *start = (const char *)global_state.GetString(GL_EXTENSIONS);
     if (!start) {
         return false;
     }
@@ -1786,7 +1786,7 @@ WEAK int halide_opengl_initialize_kernels(void *user_context, void **state_ptr,
         // vertex expressions interpolated by varying attributes are evaluated
         // by host code on the CPU and passed to the GPU as values in the
         // vertex buffer.
-        enum { PrinterLength = 1024*256 };
+        enum { PrinterLength = 1024*4 };
         Printer<StringStreamPrinter,PrinterLength> vertex_src(user_context);
 
         // Count the number of varying attributes, this is 2 for the spatial
