@@ -761,7 +761,7 @@ void CodeGen_C::visit(const Call *op) {
             }
             rhs << ")";
         } else if (op->name == Call::profiling_timer) {
-            internal_assert(op->args.size() == 0);
+            internal_assert(op->args.size() == 1);
             rhs << "halide_profiling_timer(";
             rhs << (have_user_context ? "__user_context_" : "NULL");
             rhs << ")";
@@ -1093,11 +1093,11 @@ void CodeGen_C::visit(const Pipeline *op) {
 }
 
 void CodeGen_C::visit(const For *op) {
-    if (op->for_type == For::Parallel) {
+    if (op->for_type == ForType::Parallel) {
         do_indent();
         stream << "#pragma omp parallel for\n";
     } else {
-        internal_assert(op->for_type == For::Serial)
+        internal_assert(op->for_type == ForType::Serial)
             << "Can only emit serial or parallel for loops to C\n";
     }
 
