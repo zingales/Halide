@@ -16,26 +16,14 @@
 
 #include "HalideRuntime.h"
 
-// This app does not explicitly include a generated filter header, instead it
-// dlsym's a generated function out of the current process. As a result, the
-// buffer_t declaration usually placed in the generated header is not available.
-#ifndef BUFFER_T_DEFINED
-#define BUFFER_T_DEFINED
-#include <stdint.h>
-typedef struct buffer_t {
-  uint64_t dev;
-  uint8_t* host;
-  int32_t extent[4];
-  int32_t stride[4];
-  int32_t min[4];
-  int32_t elem_size;
-  bool host_dirty;
-  bool dev_dirty;
-} buffer_t;
-#endif
-
 NSString* kAppProtocolURLScheme = @"app";
 
+// This protocol returns images to the app's WebView in response to app://
+// requests. It provides the same functionality on OS X, and on iOS where
+// interaction between the app and the WebView javascript context is very
+// limited. On other platforms like pnacl, images are returned directly to the
+// javascript context in the Chrome WebView and a protocol like this is not
+// necessary.
 @implementation AppProtocol
 
 + (BOOL)canInitWithRequest:(NSURLRequest *)request {
@@ -65,20 +53,15 @@ NSString* kAppProtocolURLScheme = @"app";
   ViewController* ctrl = (ViewController*)[UIApplication sharedApplication].delegate.window.rootViewController;
 
   NSString* key = self.request.URL.absoluteString;
-  BufferT* entry = ctrl.database[key];
 
-  // Check to see if the key was found, if so, obtain a BufferT instance from it
-  // and create an output image from the buffer_t
-  UIImage* image = nil;
-  if (entry) {
-    image = [entry dataAsImage];
-  } else {
+  // Lookup the key in the image database
+  NSData* responseData = ctrl.database[key];
+
+  if (!responseData) {
     // Otherwise, return a placeholder image
-    image = [UIImage imageNamed:@"none"];
+    responseData = UIImagePNGRepresentation([UIImage imageNamed:@"none"]);
   }
 
-  // Convert the image to a PNG
-  NSData* responseData = UIImagePNGRepresentation(image);
   NSString* responseMimeType = @"image/png";
 
   // Create a response to send back to the webview

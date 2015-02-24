@@ -1,6 +1,7 @@
 #include "HalideRuntime.h"
 
 #include <stdlib.h>
+#include <strings.h>
 
 #ifndef BUFFER_T_DEFINED
 #define BUFFER_T_DEFINED
@@ -31,6 +32,9 @@ extern "C"
 int example(const float _runtime_factor, buffer_t *_g);
 
 extern "C"
+int example_glsl(const float _runtime_factor, buffer_t *_g);
+
+extern "C"
 bool test_example_generator() {
 
   halide_print(NULL,"Running filter example\n");
@@ -42,6 +46,7 @@ bool test_example_generator() {
   float runtime_factor = 2.0f;
   unsigned char* data = (unsigned char*)malloc(N*N*C);
 
+  // TODO: Add other functions to create input images
   // buffer_t g = halide_buffer_with_url("");
 
   buffer_t g = {
@@ -55,9 +60,38 @@ bool test_example_generator() {
     .dev_dirty = 0,
   };
 
+  halide_print(NULL,"CPU target\n");
   example(runtime_factor,&g);
 
   int errors = 0;
+  for (int c = 0; c < C; c++) {
+    for (int y = 0; y < N; y++) {
+      for (int x = 0; x < N; x++) {
+        unsigned char expected = (unsigned char)((float)(x > y ? x : y) *
+                                                 (float)c *
+                                                 compiletime_factor *
+                                                 runtime_factor);
+        unsigned char actual   = g.host[c*N*N + y*N + x];
+        if (expected != actual) {
+          errors++;
+        }
+      }
+    }
+  }
+
+  halide_buffer_display(&g);
+  free(g.host);
+
+  halide_print(NULL,"GPU target\n");
+
+  g.host = (unsigned char*)malloc(N*N*C);
+  g.host_dirty = 1;
+  g.dev_dirty = 0;
+
+  example_glsl(runtime_factor,&g);
+
+  halide_copy_to_host(NULL, &g);
+
   for (int c = 0; c < C; c++) {
     for (int y = 0; y < N; y++) {
       for (int x = 0; x < N; x++) {

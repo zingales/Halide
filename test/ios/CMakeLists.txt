@@ -48,8 +48,6 @@ add_executable(test_ios MACOSX_BUNDLE
   AppDelegate.m
   AppProtocol.h
   AppProtocol.mm
-  BufferT.h
-  BufferT.m
   ../generator/test_example_generator.cpp
   main.m
   ViewController.h
@@ -67,7 +65,7 @@ set(exported_symbols "-Xlinker -exported_symbol -Xlinker _${generator_func}")
 set(exported_symbols "${exported_symbols} -Xlinker -exported_symbol -Xlinker _test_example_generator")
 
 # Other frameworks passed on the link line
-set(frameworks "-framework CoreGraphics -framework Foundation -framework UIKit")
+set(frameworks "-framework CoreGraphics -framework Foundation -framework UIKit -framework OpenGLES")
 
 set_target_properties(test_ios PROPERTIES
   MACOSX_BUNDLE_EXECUTABLE_NAME "\${EXECUTABLE_NAME}"
@@ -134,7 +132,7 @@ set_target_properties(example PROPERTIES
 
 # Add a build step to call the generator
 halide_add_generator_dependency(test_ios example example example -e html target=ios-arm-64)
-# halide_add_generator_dependency(test_ios example example example -e html target=host)
+halide_add_generator_dependency(test_ios example example example_glsl -e html target=ios-arm-64-opengl)
 
 # Use Xcode attributes to setup this target as a host command line tool even
 # though the other targets in the project are iOS apps.

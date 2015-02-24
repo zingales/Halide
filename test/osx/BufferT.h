@@ -31,8 +31,9 @@ typedef struct buffer_t {
 
 @property (retain) NSMutableData* hostData;
 
-+(BufferT*)createWithCBufferT:(const buffer_t*)buffer;
-+(BufferT*)createWithExtent:(NSArray*)extent ElemSize:(NSNumber*)elemSize;
+// Create a wrapper instance by making a copy of the buffer_t struct and the
+// data it points to.
+-(instancetype) initWithCBufferTCopy:(const buffer_t*)buf;
 
 // This method returns a URL which may be used to load the image via a custom
 // app specific URL scheme

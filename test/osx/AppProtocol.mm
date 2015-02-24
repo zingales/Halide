@@ -15,26 +15,14 @@
 
 #include "HalideRuntime.h"
 
-// This app does not explicitly include a generated filter header, instead it
-// dlsym's a generated function out of the current process. As a result, the
-// buffer_t declaration usually placed in the generated header is not available.
-#ifndef BUFFER_T_DEFINED
-#define BUFFER_T_DEFINED
-#include <stdint.h>
-typedef struct buffer_t {
-  uint64_t dev;
-  uint8_t* host;
-  int32_t extent[4];
-  int32_t stride[4];
-  int32_t min[4];
-  int32_t elem_size;
-  bool host_dirty;
-  bool dev_dirty;
-} buffer_t;
-#endif
-
 NSString* kAppProtocolURLScheme = @"app";
 
+// This protocol returns images to the app's WebView in response to app://
+// requests. It provides the same functionality on OS X, and on iOS where
+// interaction between the app and the WebView javascript context is very
+// limited. On other platforms like pnacl, images are returned directly to the
+// javascript context in the Chrome WebView and a protocol like this is not
+// necessary.
 @implementation AppProtocol
 
 + (BOOL)canInitWithRequest:(NSURLRequest *)request {
@@ -64,25 +52,19 @@ NSString* kAppProtocolURLScheme = @"app";
   AppDelegate* app = [NSApp delegate];
 
   NSString* key = self.request.URL.absoluteString;
-  BufferT* entry = app.database[key];
 
-  // Check to see if the key was found, if so, obtain a BufferT instance from it
-  // and create an output image from the buffer_t
-  NSImage* image = nil;
-  if (entry) {
-    image = [entry dataAsImage];
-  } else {
-    // Otherwise, return a placeholder image
-    image = [NSImage imageNamed:NSImageNameStopProgressTemplate];
+  // Check to see if the key is in the database
+  NSData* responseData = app.database[key];
+
+  // Check to see if the key was found, if not return an error image
+  if (!responseData) {
+    NSData* tiffData = [[NSImage imageNamed:NSImageNameStopProgressTemplate] TIFFRepresentation];
+    NSBitmapImageRep* rep = [NSBitmapImageRep imageRepsWithData:tiffData][0];
+    responseData = [rep representationUsingType:NSPNGFileType properties:nil];
   }
 
-  // Convert the image to a PNG
-  NSData* tiffData = [image TIFFRepresentation];
-  NSBitmapImageRep* rep = [NSBitmapImageRep imageRepsWithData:tiffData][0];
-  NSData* responseData = [rep representationUsingType:NSPNGFileType properties:nil];
-  NSString* responseMimeType = @"image/png";
-
   // Create a response to send back to the webview
+  NSString* responseMimeType = @"image/png";
   NSURLResponse *response = [[NSURLResponse alloc] initWithURL:self.request.URL
                                                       MIMEType:responseMimeType
                                          expectedContentLength:responseData.length

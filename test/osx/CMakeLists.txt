@@ -42,8 +42,6 @@ add_executable(test_osx MACOSX_BUNDLE
   AppDelegate.m
   AppProtocol.h
   AppProtocol.mm
-  BufferT.h
-  BufferT.m
   ../generator/test_example_generator.cpp
   ${resources}
   )
@@ -76,6 +74,9 @@ set_target_properties(test_osx PROPERTIES
   XCODE_ATTRIBUTE_SUPPORTED_PLATFORMS "macosx"
   XCODE_ATTRIBUTE_CLANG_CXX_LANGUAGE_STANDARD c++0x
   XCODE_ATTRIBUTE_GCC_ENABLE_CPP_RTTI NO
+
+  # Must use DWARF-only due to https://github.com/halide/Halide/issues/626
+  XCODE_ATTRIBUTE_DEBUG_INFORMATION_FORMAT dwarf
 
   LINK_FLAGS "${exported_symbols} ${frameworks}"
   )
@@ -111,3 +112,4 @@ set_target_properties(example PROPERTIES
 
 # Add a build step to call the generator
 halide_add_generator_dependency(test_osx example example example -e html target=host)
+halide_add_generator_dependency(test_osx example example example_glsl -e html target=host-opengl-gpu_debug)

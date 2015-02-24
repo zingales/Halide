@@ -8,6 +8,7 @@
 
 #import "ViewController.h"
 #import "AppDelegate.h"
+#import "AppProtocol.h"
 #import "BufferT.h"
 
 #import <dlfcn.h>
@@ -38,7 +39,8 @@ typedef int (*test_function_t)(void);
 
   self.outputView.delegate = self;
 
-  NSURL* url = [[NSBundle mainBundle] URLForResource:@"index" withExtension:@"html"];
+  NSURL* url = [[NSBundle mainBundle] URLForResource:@"index"
+                                       withExtension:@"html"];
   [self.outputView loadRequest:[NSURLRequest requestWithURL:url]];
 }
 
@@ -46,7 +48,8 @@ typedef int (*test_function_t)(void);
 
   self.outputView.frame = self.view.frame;
 
-  self.view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+  self.view.autoresizingMask = UIViewAutoresizingFlexibleWidth |
+    UIViewAutoresizingFlexibleHeight;
   self.view.autoresizesSubviews = YES;
 }
 
@@ -91,6 +94,32 @@ typedef int (*test_function_t)(void);
   [self.outputView stringByEvaluatingJavaScriptFromString:htmlMessage];
 }
 
+// The Halide runtime will call this function to initialize and make current the
+// intended implementation specific OpenGL context.
+int halide_opengl_create_context(void *user_context) {
+
+  static EAGLContext* context = nil;
+
+  static dispatch_once_t onceToken;
+  dispatch_once(&onceToken, ^{
+    context = [[EAGLContext alloc] initWithAPI:kEAGLRenderingAPIOpenGLES2];
+  });
+
+  [EAGLContext setCurrentContext:context];
+
+  return 0;
+}
+
+// This method is called by the Halide runtime to populate a function pointer
+// lookup table. Since there is only one GLES implementation available on iOS
+// we simply forward the lookup to dlsym
+void *halide_opengl_get_proc_address(void *user_context, const char *name)
+{
+  void* symbol = dlsym(RTLD_NEXT,name);
+
+  return symbol;
+}
+
 void halide_print(void *user_context, const char * message)
 {
   ViewController* app = (ViewController*)[UIApplication sharedApplication].delegate.window.rootViewController;
@@ -109,31 +138,118 @@ void halide_error(void *user_context, const char * message)
 
 int halide_buffer_display(const buffer_t* buffer)
 {
-  BufferT* obj = [BufferT createWithCBufferT:buffer];
+  // Convert the buffer_t to an NSImage
+
+  // TODO: This code should check whether or not the data is planar and handle
+  // channel types larger than one byte.
+  void* data_ptr = buffer->host;
+
+  size_t width            = buffer->extent[0];
+  size_t height           = buffer->extent[1];
+  size_t channels         = buffer->extent[2];
+  size_t bitsPerComponent = buffer->elem_size*8;
+
+  // For planar data, there is one channel across the row
+  size_t src_bytesPerRow      = width*buffer->elem_size;
+  size_t dst_bytesPerRow      = width*channels*buffer->elem_size;
+
+  size_t totalBytes = width*height*channels*buffer->elem_size;
+
+  // Unlike Mac OS X Cocoa which directly supports planar data via
+  // NSBitmapImageRep, in iOS we must create a CGImage from the pixel data and
+  // Quartz only supports interleaved formats.
+  unsigned char* src_buffer = (unsigned char*)data_ptr;
+  unsigned char* dst_buffer = (unsigned char*)malloc(totalBytes);
+
+  // Interleave the data
+  for (size_t c=0;c!=buffer->extent[2];++c) {
+    for (size_t y=0;y!=buffer->extent[1];++y) {
+      for (size_t x=0;x!=buffer->extent[0];++x) {
+        size_t src = x + y*src_bytesPerRow + c * (height*src_bytesPerRow);
+        size_t dst = c + x*channels + y*dst_bytesPerRow;
+        dst_buffer[dst] = src_buffer[src];
+      }
+    }
+  }
+
+  CGDataProviderRef provider = CGDataProviderCreateWithData(NULL, dst_buffer, totalBytes, NULL);
+  CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+
+  CGImageRef cgImage = CGImageCreate(width,
+                                     height,
+                                     bitsPerComponent,
+                                     bitsPerComponent*channels,
+                                     dst_bytesPerRow,
+                                     colorSpace,
+                                     kCGBitmapByteOrderDefault,
+                                     provider,
+                                     NULL,
+                                     NO,
+                                     kCGRenderingIntentDefault);
+
+  // Note there is a slight difference in the APIs used here between this
+  // version of halide_buffer_display and the one in the Mac OS X app
+  UIImage* image = [UIImage imageWithCGImage:cgImage];
+
+  // Cleanup
+  CGImageRelease(cgImage);
+  CGColorSpaceRelease(colorSpace);
+  CGDataProviderRelease(provider);
+
+  // Convert the image to a PNG
+  NSData* data = UIImagePNGRepresentation(image);
+
+  // Construct a name for the image resource
+  static int counter = 0;
+  NSString* url = [NSString stringWithFormat:@"%@:///buffer_t%d",kAppProtocolURLScheme,counter++];
 
   // Add the buffer to the result database
   ViewController* ctrl = (ViewController*)[UIApplication sharedApplication].delegate.window.rootViewController;
-  ctrl.database[obj.imageURL] = obj;
+  ctrl.database[url] = data;
 
   // Load the image through a URL
-  [ctrl echo:[NSString stringWithFormat:@"<img src='%@'></img>",obj.imageURL]];
+  [ctrl echo:[NSString stringWithFormat:@"<img src='%@'></img>",url]];
 
   return 0;
 }
 
 int halide_buffer_print(const buffer_t* buffer)
 {
-  BufferT* obj = [BufferT createWithCBufferT:buffer];
+  NSMutableArray* output = [NSMutableArray array];
 
-  // Add the buffer to the result database
-  ViewController* ctrl = (ViewController*)[UIApplication sharedApplication].delegate.window.rootViewController;
-  ctrl.database[obj.imageURL] = obj;
+  // TODO sort the stride to determine the fastest changing dimension
+
+  // For 2D + color channels images, the third dimension extent is usually zero
+  int extent3 = buffer->extent[3] ? buffer->extent[3] : 1;
+
+  for (int z = 0; z != extent3; ++z) {
+    for (int y = 0; y != buffer->extent[2]; ++y) {
+      for (int x = 0; x != buffer->extent[1]; ++x) {
+        for (int c = 0; c != buffer->extent[0]; ++c) {
+          int idx = z*buffer->stride[3] + y*buffer->stride[2] + x*buffer->stride[1] + c*buffer->stride[0];
+          switch (buffer->elem_size) {
+            case 1:
+              [output addObject:[NSString stringWithFormat:@"%d,",((unsigned char*)buffer->host)[idx]]];
+              break;
+            case 4:
+              [output addObject:[NSString stringWithFormat:@"%f,",((float*)buffer->host)[idx]]];
+              break;
+          }
+        }
+        [output addObject:@"\n"];
+      }
+      [output addObject:@"\n"];
+    }
+    [output addObject:@"\n\n"];
+  }
+
+  NSString* text = [output componentsJoinedByString:@""];
 
   // Output the buffer as a string
-  [ctrl echo:[NSString stringWithFormat:@"<pre class='data'>%@</pre><br>",obj.dataAsString]];
-
+  ViewController* ctrl = (ViewController*)[UIApplication sharedApplication].delegate.window.rootViewController;
+  [ctrl echo:[NSString stringWithFormat:@"<pre class='data'>%@</pre><br>",text]];
+  
   return 0;
 }
-
 
 @end

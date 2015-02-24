@@ -94,7 +94,9 @@ public:
         // here; this produces the width of the SIMD vector being targeted
         // divided by the width of the data type.
         // g.vectorize(x, natural_vector_size(output_type));
-
+        if (get_target().has_feature(Target::OpenGL)) {
+          g.glsl(x, y, c);
+        }
         return g;
     }
 

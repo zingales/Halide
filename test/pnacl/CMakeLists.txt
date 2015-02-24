@@ -51,9 +51,11 @@ set_target_properties(example PROPERTIES
   XCODE_ATTRIBUTE_GCC_ENABLE_CPP_RTTI NO
   )
 
-# Add a build step to call the generator, not that so far we have not added a
-# test_nacl target to the project.
+# Add a build step to call the generator, note that so far we have not added a
+# test_nacl target to the project. We will eventually add a custom target to
+# call the pnacl build
 halide_add_generator_dependency(test_pnacl example example example target=pnacl-32-nacl)
+halide_add_generator_dependency(test_pnacl example example example_glsl target=pnacl-32-nacl-opengl)
 
 # Determine PNACL SDK environment
 set(NACL_SDK_ROOT "" CACHE PATH "Full path to the nacl_sdk directory")
@@ -61,7 +63,7 @@ set(NACL_PEPPER_VERSION "41" CACHE PATH "Name of the pepper version ")
 
 set(nacl_pepper_root "${NACL_SDK_ROOT}/pepper_${NACL_PEPPER_VERSION}")
 set(nacl_include_flags "-I${nacl_pepper_root}/include" "-I${HALIDE_INCLUDE_PATH}")
-set(nacl_linker_flags "-L${nacl_pepper_root}/lib/pnacl/Release")
+set(nacl_linker_flags "-L${nacl_pepper_root}/lib/pnacl/Release" -lppapi_cpp -lppapi -lppapi_gles2)
 
 # It is not possible to dlsym the test symbol in pepper newlib, so we must
 # specify the function names to test a compile time instead of via a javascript
@@ -87,15 +89,23 @@ add_custom_command(OUTPUT ${out_dir}/test_example_generator.bc
 # Add a build step to generate a .pexe target
 add_custom_target(test_pnacl
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-  COMMAND ${nacl_toolchain}/bin/pnacl-clang++ -o ${out_dir}/test_pnacl.pexe ${out_dir}/main.bc ${out_dir}/test_example_generator.bc ${out_dir}/example.bc -O2 ${nacl_linker_flags} -lppapi_cpp -lppapi
+  COMMAND ${nacl_toolchain}/bin/pnacl-clang++ -o ${out_dir}/test_pnacl.pexe
+          ${out_dir}/main.bc
+          ${out_dir}/test_example_generator.bc
+          ${out_dir}/example.bc
+          ${out_dir}/example_glsl.bc
+          -O2 ${nacl_linker_flags}
+
   COMMAND ${nacl_toolchain}/bin/pnacl-finalize -o ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/test_pnacl.pexe ${out_dir}/test_pnacl.pexe
   COMMAND cp index.html ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/
   COMMAND cp test_pnacl.nmf ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/
   DEPENDS ${out_dir}/main.bc
           ${out_dir}/test_example_generator.bc
-          ${out_dir}/example.bc
           index.html
           test_pnacl.nmf
+          example
+          exec_generator_example_example
+          exec_generator_example_example_glsl
   SOURCES main.cpp
           index.html
           test_pnacl.nmf
