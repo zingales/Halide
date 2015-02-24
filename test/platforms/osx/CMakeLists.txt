@@ -5,8 +5,7 @@
 
 cmake_minimum_required(VERSION 2.8.5)
 
-include("${CMAKE_CURRENT_SOURCE_DIR}/../HalideGenerator.cmake")
-include("${CMAKE_CURRENT_SOURCE_DIR}/../../src/HalideRuntime.cmake")
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../HalideGenerator.cmake")
 
 # CMake will only build for a single platform per project, it is not possible to
 # build for both iOS and MacOSX in the same project. In iOS Halide development,
@@ -42,7 +41,7 @@ add_executable(test_osx MACOSX_BUNDLE
   AppDelegate.mm
   AppProtocol.h
   AppProtocol.mm
-  ../generator/test_example_generator.cpp
+  ../../generator/test_example_generator.cpp
   ${resources}
   )
 
@@ -87,12 +86,9 @@ target_include_directories(test_osx PUBLIC
 
 # Add a Halide Generator to the test app project.
 
-# Add a helper program required by HalideRuntime.cmake
-add_executable(bitcode2cpp ../../tools/bitcode2cpp.cpp)
-
 # Then create the generator executable
 add_executable(example
-  ../generator/example_generator.cpp
+  ../../generator/example_generator.cpp
   generator_main.cpp
   )
 

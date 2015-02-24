@@ -5,8 +5,7 @@
 
 cmake_minimum_required(VERSION 2.8.5)
 
-include("${CMAKE_CURRENT_SOURCE_DIR}/../HalideGenerator.cmake")
-include("${CMAKE_CURRENT_SOURCE_DIR}/../../src/HalideRuntime.cmake")
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../HalideGenerator.cmake")
 
 # In iOS Halide development, (for ahead-of-time compilation) Halide is built for
 # OS X and these tests must be built for iOS. This is accomplished below by
@@ -48,7 +47,7 @@ add_executable(test_ios MACOSX_BUNDLE
   AppDelegate.m
   AppProtocol.h
   AppProtocol.mm
-  ../generator/test_example_generator.cpp
+  ../../generator/test_example_generator.cpp
   main.m
   ViewController.h
   ViewController.mm
@@ -94,25 +93,8 @@ target_include_directories(test_ios PUBLIC
   )
 
 # Add a Halide Generator to the test app project.
-
-# Add a helper program required by HalideRuntime.cmake
-add_executable(bitcode2cpp ../../tools/bitcode2cpp.cpp)
-
-# Use Xcode attributes to setup this target as a host command line tool even
-# though the other targets in the project are iOS apps.
-set_target_properties(bitcode2cpp PROPERTIES
-  XCODE_ATTRIBUTE_SDKROOT "macosx"
-  XCODE_ATTRIBUTE_DEBUG_INFORMATION_FORMAT "dwarf-with-dsym"
-  XCODE_ATTRIBUTE_INFOPLIST_PREPROCESS YES
-  XCODE_ATTRIBUTE_VALID_ARCHS "i386 x86_64"
-  XCODE_ATTRIBUTE_SUPPORTED_PLATFORMS "macosx"
-  XCODE_ATTRIBUTE_CLANG_CXX_LANGUAGE_STANDARD c++0x
-  XCODE_ATTRIBUTE_GCC_ENABLE_CPP_RTTI NO
-  )
-
-# Then create the generator executable
 add_executable(example
-  ../generator/example_generator.cpp
+  ../../generator/example_generator.cpp
   generator_main.cpp
   )
 
@@ -145,13 +127,3 @@ set_target_properties(example PROPERTIES
   XCODE_ATTRIBUTE_CLANG_CXX_LANGUAGE_STANDARD c++0x
   XCODE_ATTRIBUTE_GCC_ENABLE_CPP_RTTI NO
   )
-
-
-
-
-
-
-
-
-
-

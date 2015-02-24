@@ -1,17 +1,10 @@
-# This file contains a CMake build for a basic OSX app that runs a series of
+# This file contains a CMake build for a basic PNACL app that runs a series of
 # Generator tests and displays the results. Generators must be
-# added to the app below and then configured in an html file loaded at
-# runtime.
+# added to the app below.
 
 cmake_minimum_required(VERSION 2.8.5)
 
-include("${CMAKE_CURRENT_SOURCE_DIR}/../HalideGenerator.cmake")
-include("${CMAKE_CURRENT_SOURCE_DIR}/../../src/HalideRuntime.cmake")
-
-# CMake will only build for a single platform per project, it is not possible to
-# build for both iOS and MacOSX in the same project. In iOS Halide development,
-# (for ahead-of-time compilation) Halide is built for OS X and these tests must
-# be built for iOS.
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../HalideGenerator.cmake")
 
 project(test_pnacl)
 
@@ -28,12 +21,9 @@ halide_generator_output_path(${generator_func} out_dir)
 
 # Add a Halide Generator to the test app project.
 
-# Add a helper program required by HalideRuntime.cmake
-add_executable(bitcode2cpp ../../tools/bitcode2cpp.cpp)
-
 # Then create the generator executable
 add_executable(example
-  ../generator/example_generator.cpp
+  ../../generator/example_generator.cpp
   generator_main.cpp
   )
 
@@ -58,7 +48,7 @@ halide_add_generator_dependency(test_pnacl example example example target=pnacl-
 halide_add_generator_dependency(test_pnacl example example example_glsl target=pnacl-32-nacl-opengl)
 
 # Determine PNACL SDK environment
-set(NACL_SDK_ROOT "" CACHE PATH "Full path to the nacl_sdk directory")
+set(NACL_SDK_ROOT "" CACHE PATH "Full path to the nacl_sdk directory containing pepper_* versions")
 set(NACL_PEPPER_VERSION "41" CACHE PATH "Name of the pepper version ")
 
 set(nacl_pepper_root "${NACL_SDK_ROOT}/pepper_${NACL_PEPPER_VERSION}")
@@ -82,8 +72,8 @@ COMMAND ${nacl_toolchain}/bin/pnacl-clang++ -o ${out_dir}/main.bc ${CMAKE_CURREN
 
 # Compile the test code to a pnacl bc file
 add_custom_command(OUTPUT ${out_dir}/test_example_generator.bc
-  COMMAND ${nacl_toolchain}/bin/pnacl-clang++ -o ${out_dir}/test_example_generator.bc ${CMAKE_CURRENT_SOURCE_DIR}/../generator/test_example_generator.cpp -c -O2 ${nacl_include_flags}
-  MAIN_DEPENDENCY ../generator/test_example_generator.cpp
+  COMMAND ${nacl_toolchain}/bin/pnacl-clang++ -o ${out_dir}/test_example_generator.bc ${CMAKE_CURRENT_SOURCE_DIR}/../../generator/test_example_generator.cpp -c -O2 ${nacl_include_flags}
+  MAIN_DEPENDENCY ../../generator/test_example_generator.cpp
   )
 
 # Add a build step to generate a .pexe target
