@@ -72,15 +72,17 @@ function(halide_add_osx_app)
     ${resources}
     )
 
-  # This test harness will load Halide generated symbols from the
-  # executable using dlsym. The harness code does not refer to the
-  # symbols explicitly so we have to make sure that the linker does
-  # not remove them from the executable.
+  # Determine an output directory
+  file(TO_NATIVE_PATH "${CMAKE_CURRENT_BINARY_DIR}/scratch_${args_TARGET}/" out_dir)
+  file(MAKE_DIRECTORY "${out_dir}")
 
-  # Export the test symbols
+  # Generate a header file declaring the test symbols
   foreach(test_function ${args_TEST_FUNCTIONS})
-    set(exported_symbols "${exported_symbols} -Xlinker -exported_symbol -Xlinker _${test_function}")
+    set(test_symbols_declare "${test_symbols_declare} extern \"C\" int ${test_function}(void); ")
+    set(test_symbols_table "${test_symbols_table} ${test_function}, ")
+    set(test_names_table "${test_names_table} \"${test_function}\", ")
   endforeach(test_function)
+  configure_file(test_symbols.h.template ${out_dir}/test_symbols.h)
 
   # Other frameworks passed on the link line
   set(frameworks "-framework CoreGraphics -framework Foundation -framework Cocoa -framework WebKit -framework OpenGL -framework AGL")
@@ -105,11 +107,12 @@ function(halide_add_osx_app)
     # Must use DWARF-only due to https://github.com/halide/Halide/issues/626
     XCODE_ATTRIBUTE_DEBUG_INFORMATION_FORMAT dwarf
 
-    LINK_FLAGS "${exported_symbols} ${frameworks}"
+    LINK_FLAGS "${frameworks}"
     )
 
   target_include_directories(${args_TARGET} PUBLIC
-  ${HALIDE_INCLUDE_PATH}
+    ${HALIDE_INCLUDE_PATH}
+    ${out_dir}
     )
 
 endfunction(halide_add_osx_app)
@@ -144,12 +147,6 @@ function(halide_add_osx_generator_to_app)
       XCODE_ATTRIBUTE_GCC_ENABLE_CPP_RTTI NO
       )
   endif()
-
-  # Add the generated function name to the export list for the app
-  get_target_property(existing_link_flags ${args_TARGET} LINK_FLAGS)
-  set_target_properties(${args_TARGET} PROPERTIES
-    LINK_FLAGS "${existing_link_flags} -Xlinker -exported_symbol -Xlinker _${args_GENERATED_FUNCTION}"
-    )
 
   # Add a build step to call the generator
   halide_add_generator_dependency(
@@ -201,15 +198,17 @@ function(halide_add_ios_app)
     ${RESOURCES}
     )
 
-  # This test harness will load Halide generated symbols from the
-  # executable using dlsym. The harness code does not refer to the
-  # symbols explicitly so we have to make sure that the linker does
-  # not remove them from the executable.
+  # Determine an output directory
+  file(TO_NATIVE_PATH "${CMAKE_CURRENT_BINARY_DIR}/scratch_${args_TARGET}/" out_dir)
+  file(MAKE_DIRECTORY "${out_dir}")
 
-  # Export the test symbols
+  # Generate a header file declaring the test symbols
   foreach(test_function ${args_TEST_FUNCTIONS})
-    set(exported_symbols "${exported_symbols} -Xlinker -exported_symbol -Xlinker _${test_function}")
+    set(test_symbols_declare "${test_symbols_declare} extern \"C\" int ${test_function}(void); ")
+    set(test_symbols_table "${test_symbols_table} ${test_function}, ")
+    set(test_names_table "${test_names_table} \"${test_function}\", ")
   endforeach(test_function)
+  configure_file(test_symbols.h.template ${out_dir}/test_symbols.h)
 
   # Other frameworks passed on the link line
   set(frameworks "-framework CoreGraphics -framework Foundation -framework UIKit -framework OpenGLES")
@@ -233,11 +232,12 @@ function(halide_add_ios_app)
     XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
     XCODE_ATTRIBUTE_ONLY_ACTIVE_ARCH YES
 
-    LINK_FLAGS "${exported_symbols} ${frameworks}"
+    LINK_FLAGS "${frameworks}"
     )
 
   target_include_directories(${args_TARGET} PUBLIC
     ${HALIDE_INCLUDE_PATH}
+    ${out_dir}
     )
 
 endfunction(halide_add_ios_app)
@@ -315,11 +315,6 @@ function(halide_add_pnacl_app)
   set(nacl_include_flags "-I${nacl_pepper_root}/include" "-I${HALIDE_INCLUDE_PATH}")
   set(nacl_linker_flags "-L${nacl_pepper_root}/lib/pnacl/Release" -lppapi_cpp -lppapi -lppapi_gles2)
 
-  # It is not possible to dlsym the test symbol in pepper newlib, so we must
-  # specify the function names to test a compile time instead of via a javascript
-  # variable.
-  set(nacl_test_defines "-DTEST_SYMBOL=test_example_generator")
-
   if(APPLE)
     set(nacl_toolchain "${nacl_pepper_root}/toolchain/mac_pnacl")
   endif()
@@ -328,9 +323,19 @@ function(halide_add_pnacl_app)
   file(TO_NATIVE_PATH "${CMAKE_CURRENT_BINARY_DIR}/scratch_${args_TARGET}/" out_dir)
   file(MAKE_DIRECTORY "${out_dir}")
 
+  # Generate a header file declaring the test symbols
+  foreach(test_function ${args_TEST_FUNCTIONS})
+    set(test_symbols_declare "${test_symbols_declare} extern \"C\" int ${test_function}(void); ")
+    set(test_symbols_table "${test_symbols_table} ${test_function}, ")
+    set(test_names_table "${test_names_table} \"${test_function}\", ")
+  endforeach(test_function)
+  configure_file(test_symbols.h.template ${out_dir}/test_symbols.h)
+
+  set(nacl_include_flags ${nacl_include_flags} "-I${out_dir}")
+
   # Compile the module and instance code to a pnacl bc file
   add_custom_command(OUTPUT ${out_dir}/main.bc
-    COMMAND ${nacl_toolchain}/bin/pnacl-clang++ -o ${out_dir}/main.bc ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp -c -O2 ${nacl_include_flags} ${nacl_test_defines}
+    COMMAND ${nacl_toolchain}/bin/pnacl-clang++ -o ${out_dir}/main.bc ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp -c -O2 ${nacl_include_flags}
     MAIN_DEPENDENCY main.cpp
   )
 
