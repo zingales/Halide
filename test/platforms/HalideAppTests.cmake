@@ -346,7 +346,7 @@ function(halide_add_pnacl_app)
     set(test_output "${out_dir}/${test_source}.bc")
 
     add_custom_command(OUTPUT ${test_output}
-      COMMAND ${nacl_toolchain}/bin/pnacl-clang++ -o ${test_output} ${CMAKE_CURRENT_SOURCE_DIR}/${test_source_path} -c -O2 ${nacl_include_flags}
+      COMMAND ${nacl_toolchain}/bin/pnacl-clang++ -o ${test_output} ${CMAKE_CURRENT_SOURCE_DIR}/${test_source_path} -c -O2 ${nacl_include_flags} "\${HALIDE_PNACL_INCLUDE_FLAGS}"
       MAIN_DEPENDENCY ${test_source_path}
       )
 
@@ -387,6 +387,9 @@ function(halide_add_pnacl_app)
 
   set_target_properties(${args_TARGET} PROPERTIES
     XCODE_ATTRIBUTE_HALIDE_PNACL_GENERATED_LIBRARIES ""
+    )
+  set_target_properties(${args_TARGET} PROPERTIES
+    XCODE_ATTRIBUTE_HALIDE_PNACL_INCLUDE_FLAGS ""
     )
 
 endfunction(halide_add_pnacl_app)
@@ -440,6 +443,13 @@ function(halide_add_pnacl_generator_to_app)
   set_target_properties(${args_TARGET} PROPERTIES
     XCODE_ATTRIBUTE_HALIDE_PNACL_GENERATED_LIBRARIES
     "${existing_libraries} ${generator_library}"
+    )
+
+  get_target_property(existing_includes ${args_TARGET}
+    XCODE_ATTRIBUTE_HALIDE_PNACL_INCLUDE_FLAGS)
+  set_target_properties(${args_TARGET} PROPERTIES
+    XCODE_ATTRIBUTE_HALIDE_PNACL_INCLUDE_FLAGS
+    "${existing_includes} -I${out_dir}"
     )
 
 endfunction(halide_add_pnacl_generator_to_app)

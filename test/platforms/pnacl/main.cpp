@@ -110,7 +110,10 @@ extern "C" int halide_buffer_display(const buffer_t* buffer) {
             for (size_t x=0;x!=buffer->extent[0];++x) {
                 size_t src = x + y*src_bytesPerRow + c * (height*src_bytesPerRow);
                 size_t dst = c + x*channels + y*dst_bytesPerRow;
-                dst_buffer[dst] = src_buffer[src];
+                if (c == 3)
+                  dst_buffer[dst] = 255;
+                else
+                  dst_buffer[dst] = src_buffer[src];
             }
         }
     }

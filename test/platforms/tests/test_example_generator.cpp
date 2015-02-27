@@ -3,21 +3,6 @@
 #include <stdlib.h>
 #include <strings.h>
 
-#ifndef BUFFER_T_DEFINED
-#define BUFFER_T_DEFINED
-#include <stdint.h>
-typedef struct buffer_t {
-  uint64_t dev;
-  uint8_t* host;
-  int32_t extent[4];
-  int32_t stride[4];
-  int32_t min[4];
-  int32_t elem_size;
-  bool host_dirty;
-  bool dev_dirty;
-} buffer_t;
-#endif
-
 // This function outputs the buffer in text form in a platform specific manner.
 extern "C"
 int halide_buffer_print(const buffer_t* buffer);
@@ -28,16 +13,14 @@ int halide_buffer_print(const buffer_t* buffer);
 extern "C"
 int halide_buffer_display(const buffer_t* buffer);
 
-extern "C"
-int example(const float _runtime_factor, buffer_t *_g);
-
-extern "C"
-int example_glsl(const float _runtime_factor, buffer_t *_g);
+#include "example.h"
+#include "example_glsl.h"
 
 extern "C"
 bool test_example_generator() {
 
-  halide_print(NULL,"Running filter example\n");
+  halide_print(NULL,"Running filter example. This should produce a blue and "
+               "green pattern repeated twice.\n");
 
   int N = 256;
   int C = 4;
@@ -63,16 +46,12 @@ bool test_example_generator() {
   halide_print(NULL,"CPU target\n");
   example(runtime_factor,&g);
 
-  halide_copy_to_host(NULL,&g);
-
   int errors = 0;
   for (int c = 0; c < C; c++) {
     for (int y = 0; y < N; y++) {
       for (int x = 0; x < N; x++) {
-        unsigned char expected = (unsigned char)((float)(x > y ? x : y) *
-                                                 (float)c *
-                                                 compiletime_factor *
-                                                 runtime_factor);
+        float value = (x > y ? x : y) * c * compiletime_factor * runtime_factor;
+        unsigned char expected = (unsigned char)(int(value) % 255);
         unsigned char actual   = g.host[c*N*N + y*N + x];
         if (expected != actual) {
           errors++;
@@ -97,10 +76,8 @@ bool test_example_generator() {
   for (int c = 0; c < C; c++) {
     for (int y = 0; y < N; y++) {
       for (int x = 0; x < N; x++) {
-        unsigned char expected = (unsigned char)((float)(x > y ? x : y) *
-                                                 (float)c *
-                                                 compiletime_factor *
-                                                 runtime_factor);
+        float value = (x > y ? x : y) * c * compiletime_factor * runtime_factor;
+        unsigned char expected = (unsigned char)(int(value) % 255);
         unsigned char actual   = g.host[c*N*N + y*N + x];
         if (expected != actual) {
           errors++;
