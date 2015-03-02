@@ -18,8 +18,8 @@ char *filter = NULL;
 
 struct job {
     const char *op;
-    const char *module;
     Func f;
+    vector<Argument> arg_types;
     char *result;
 };
 
@@ -32,9 +32,7 @@ void check(const char *op, int vector_width, Expr e) {
         if (strncmp(op, filter, strlen(filter)) != 0) return;
     }
 
-    printf("%s %d\n", op, vector_width);
-
-    std::string name = std::string("test_") + op + Internal::unique_name('_');
+    std::string name = std::string("test_") + op + "x" + Internal::int_to_string(vector_width) + Internal::unique_name('_');
     for (int i = 0; i < name.size(); i++) {
         if (name[i] == '.') name[i] = '_';
     }
@@ -54,18 +52,20 @@ void check(const char *op, int vector_width, Expr e) {
     arg_types.push_back(Argument("in_i64", Argument::Buffer, Int(1), 1));
     arg_types.push_back(Argument("in_u64", Argument::Buffer, Int(1), 1));
 
-    char *module = new char[1024];
-    snprintf(module, 1024, "test_%s_%s", op, f.name().c_str());
-    f.compile_to_assembly(module, arg_types, target);
-
-    job j = {op, module, f, NULL};
+    job j = {op, f, arg_types, NULL};
     jobs.push_back(j);
 }
 
 void do_job(job &j) {
     const char *op = j.op;
-    const char *module = j.module;
     Func f = j.f;
+
+    printf("%s\n", f.name().c_str());
+
+    char module[1024];
+    snprintf(module, 1024, "test_%s_%s", op, f.name().c_str());
+    f.compile_to_assembly(module, j.arg_types, target);
+
 
     char cmd[1024];
     snprintf(cmd, 1024,
@@ -100,7 +100,7 @@ void do_job(job &j) {
     }
 }
 
-const int nThreads = 16;
+const int nThreads = 4;
 
 void *worker(void *arg) {
     int n = *((int *)arg);
