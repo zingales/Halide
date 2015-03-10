@@ -204,9 +204,8 @@ set(HEADER_FILES
   Bounds.h
   BoundsInference.h
   Buffer.h
-  buffer_t.h
   CodeGen_C.h
-  CodeGen.h
+  CodeGen_LLVM.h
   CodeGen_X86.h
   CodeGen_GPU_Host.h
   CodeGen_PTX_Dev.h
@@ -294,7 +293,9 @@ set(HEADER_FILES
   BranchVisitors.h
   SpecializeBranchedLoops.h
   RemoveDeadAllocations.h
+  LLVM_Runtime_Linker.h
   DeviceInterface.h
+  runtime/HalideRuntime.h
 )
 
 file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/include")
@@ -312,7 +313,7 @@ file(COPY runtime/HalideRuntimeOpenGL.h DESTINATION "${CMAKE_BINARY_DIR}/include
 add_definitions("-DCOMPILING_HALIDE")
 
 add_library(Halide ${HALIDE_LIBRARY_TYPE}
-  CodeGen.cpp
+  CodeGen_LLVM.cpp
   CodeGen_Internal.cpp
   CodeGen_X86.cpp
   CodeGen_GPU_Host.cpp
@@ -402,6 +403,7 @@ add_library(Halide ${HALIDE_LIBRARY_TYPE}
   BranchVisitors.cpp
   SpecializeBranchedLoops.cpp
   RemoveDeadAllocations.cpp
+  LLVM_Runtime_Linker.cpp
   DeviceInterface.cpp
   "${CMAKE_BINARY_DIR}/include/Halide.h"
   ${HEADER_FILES}

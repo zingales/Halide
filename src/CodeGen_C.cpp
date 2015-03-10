@@ -3,7 +3,6 @@
 #include <limits>
 
 #include "CodeGen_C.h"
-#include "CodeGen.h"
 #include "CodeGen_Internal.h"
 #include "Substitute.h"
 #include "IROperator.h"
@@ -267,7 +266,7 @@ void CodeGen_C::compile_header(const string &name, const vector<Argument> &args)
     stream << "int " << name << "(";
     for (size_t i = 0; i < args.size(); i++) {
         if (i > 0) stream << ", ";
-        if (args[i].is_buffer) {
+        if (args[i].is_buffer()) {
             stream << "buffer_t *" << print_name(args[i].name);
         } else {
             stream << "const "
@@ -298,7 +297,7 @@ class ExternCallPrototypes : public IRGraphVisitor {
             if (!emitted.count(op->name)) {
                 stream << "extern \"C\" " << type_to_c_type(op->type)
                        << " " << op->name << "(";
-                if (CodeGen::function_takes_user_context(op->name)) {
+                if (function_takes_user_context(op->name)) {
                     stream << "void *";
                     if (op->args.size()) {
                         stream << ", ";
@@ -402,7 +401,7 @@ void CodeGen_C::compile(Stmt s, string name,
     // Emit the function prototype
     stream << "extern \"C\" int " << name << "(";
     for (size_t i = 0; i < args.size(); i++) {
-        if (args[i].is_buffer) {
+        if (args[i].is_buffer()) {
             stream << "buffer_t *"
                    << print_name(args[i].name)
                    << "_buffer";
@@ -420,7 +419,7 @@ void CodeGen_C::compile(Stmt s, string name,
 
     // Unpack the buffer_t's
     for (size_t i = 0; i < args.size(); i++) {
-        if (args[i].is_buffer) {
+        if (args[i].is_buffer()) {
             unpack_buffer(args[i].type, args[i].name);
         }
     }
@@ -963,7 +962,7 @@ void CodeGen_C::visit(const Call *op) {
         }
         rhs << op->name << "(";
 
-        if (CodeGen::function_takes_user_context(op->name)) {
+        if (function_takes_user_context(op->name)) {
             rhs << (have_user_context ? "__user_context_, " : "NULL, ");
         }
 
@@ -1263,10 +1262,10 @@ void CodeGen_C::visit(const Evaluate *op) {
 }
 
 void CodeGen_C::test() {
-    Argument buffer_arg("buf", true, Int(32));
-    Argument float_arg("alpha", false, Float(32));
-    Argument int_arg("beta", false, Int(32));
-    Argument user_context_arg("__user_context", false, Handle());
+    Argument buffer_arg("buf", Argument::Buffer, Int(32), 3);
+    Argument float_arg("alpha", Argument::Scalar, Float(32), 0);
+    Argument int_arg("beta", Argument::Scalar, Int(32), 0);
+    Argument user_context_arg("__user_context", Argument::Scalar, Handle(), 0);
     vector<Argument> args(4);
     args[0] = buffer_arg;
     args[1] = float_arg;

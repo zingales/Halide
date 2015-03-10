@@ -75,10 +75,9 @@ function(halide_add_generator_dependency)
   # Add a custom target to invoke the GENERATOR_TARGET and output the Halide
   # generated library
   if (WIN32)
-    # TODO(srj): this has not yet been tested on Windows.
     add_custom_command(OUTPUT "${FILTER_LIB}" "${FILTER_HDR}"
       DEPENDS "${args_GENERATOR_TARGET}"
-      COMMAND "${CMAKE_BINARY_DIR}/bin/${BUILD_TYPE}/${generator_exec}" ${invoke_args}
+      COMMAND "${CMAKE_BINARY_DIR}/bin/${CMAKE_CFG_INTDIR}/${generator_exec}" ${invoke_args}
       COMMAND "lib.exe" "/OUT:${FILTER_LIB}" "${SCRATCH_DIR}\\${args_GENERATED_FUNCTION}.o"
       WORKING_DIRECTORY "${SCRATCH_DIR}"
       )
