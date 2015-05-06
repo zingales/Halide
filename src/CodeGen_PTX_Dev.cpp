@@ -26,11 +26,18 @@ CodeGen_PTX_Dev::CodeGen_PTX_Dev(Target host) : CodeGen_LLVM(host) {
     user_error << "ptx not enabled for this build of Halide.\n";
     #endif
     user_assert(llvm_NVPTX_enabled) << "llvm build not configured with nvptx target enabled\n.";
+
+    context = new llvm::LLVMContext();
+}
+
+CodeGen_PTX_Dev::~CodeGen_PTX_Dev() {
+    delete context;
 }
 
 void CodeGen_PTX_Dev::add_kernel(Stmt stmt,
                                  const std::string &name,
                                  const std::vector<GPU_Argument> &args) {
+    internal_assert(module != NULL);
 
     debug(2) << "In CodeGen_PTX_Dev::add_kernel\n";
 
@@ -45,7 +52,6 @@ void CodeGen_PTX_Dev::add_kernel(Stmt stmt,
     }
 
     // Make our function
-    function_name = name;
     FunctionType *func_t = FunctionType::get(void_t, arg_types, false);
     function = llvm::Function::Create(func_t, llvm::Function::ExternalLinkage, name, module);
 
@@ -125,15 +131,12 @@ void CodeGen_PTX_Dev::add_kernel(Stmt stmt,
 }
 
 void CodeGen_PTX_Dev::init_module() {
-
-    CodeGen_LLVM::init_module();
+    init_context();
 
     #ifdef WITH_PTX
-    internal_assert(!module);
+    delete module;
     module = get_initial_module_for_ptx_device(target, context);
     #endif
-
-    owns_module = true;
 }
 
 string CodeGen_PTX_Dev::simt_intrinsic(const string &name) {
@@ -252,6 +255,10 @@ llvm::Triple CodeGen_PTX_Dev::get_target_triple() const {
     return Triple(Triple::normalize(march() + "--"));
 }
 
+llvm::DataLayout CodeGen_PTX_Dev::get_data_layout() const {
+    return llvm::DataLayout("e-i64:64-v16:16-v32:32-n16:32:64");
+}
+
 vector<char> CodeGen_PTX_Dev::compile_to_src() {
 
     #ifdef WITH_PTX
@@ -296,8 +303,10 @@ vector<char> CodeGen_PTX_Dev::compile_to_src() {
     #if LLVM_VERSION < 33
     Options.JITExceptionHandling = false;
     #endif
+    #if LLVM_VERSION < 37
     Options.JITEmitDebugInfo = false;
     Options.JITEmitDebugInfoToDisk = false;
+    #endif
     Options.GuaranteedTailCallOpt = false;
     Options.StackAlignmentOverride = 0;
     // Options.DisableJumpTables = false;
@@ -317,8 +326,12 @@ vector<char> CodeGen_PTX_Dev::compile_to_src() {
 
     // Set up passes
     #if LLVM_VERSION < 37
+    std::string outstr;
     PassManager PM;
     #else
+    llvm::SmallString<8> outstr;
+    raw_svector_ostream ostream(outstr);
+    ostream.SetUnbuffered();
     legacy::PassManager PM;
     #endif
 
@@ -394,9 +407,10 @@ vector<char> CodeGen_PTX_Dev::compile_to_src() {
     #endif
 
     // Output string stream
-    std::string outstr;
+    #if LLVM_VERSION < 37
     raw_string_ostream outs(outstr);
     formatted_raw_ostream ostream(outs);
+    #endif
 
     // Ask the target to add backend passes as necessary.
     bool fail = Target.addPassesToEmitFile(PM, ostream,
@@ -415,10 +429,8 @@ vector<char> CodeGen_PTX_Dev::compile_to_src() {
     }
     debug(2) << "Done with CodeGen_PTX_Dev::compile_to_src";
 
-
-    string str = outs.str();
-    debug(1) << "PTX kernel:\n" << str.c_str() << "\n";
-    vector<char> buffer(str.begin(), str.end());
+    debug(1) << "PTX kernel:\n" << outstr.c_str() << "\n";
+    vector<char> buffer(outstr.begin(), outstr.end());
     buffer.push_back(0);
     return buffer;
 #else // WITH_PTX

@@ -3,7 +3,7 @@
 
 #include "IRPrinter.h"
 #include "IROperator.h"
-#include "IR.h"
+#include "Module.h"
 
 namespace Halide {
 
@@ -38,6 +38,21 @@ ostream &operator<<(ostream &stream, const Expr &ir) {
     } else {
         Internal::IRPrinter p(stream);
         p.print(ir);
+    }
+    return stream;
+}
+
+ostream &operator <<(ostream &stream, const Buffer &buffer) {
+    return stream << "buffer " << buffer.name() << " = {...}\n";
+}
+
+ostream &operator<<(ostream &stream, const Module &m) {
+    stream << "Target = " << m.target().to_string() << "\n";
+    for (size_t i = 0; i < m.buffers.size(); i++) {
+        stream << m.buffers[i] << "\n";
+    }
+    for (size_t i = 0; i < m.functions.size(); i++) {
+        stream << m.functions[i] << "\n";
     }
     return stream;
 }
@@ -83,7 +98,8 @@ void IRPrinter::test() {
     Stmt store2 = Store::make("out", call + 1, x);
     Stmt for_loop2 = For::make("x", 0, y, ForType::Vectorized , DeviceAPI::Host, store2);
     Stmt pipeline = Pipeline::make("buf", for_loop, Stmt(), for_loop2);
-    Stmt assertion = AssertStmt::make(y > 3, vec<Expr>(Expr("y is greater than "), 3));
+    Stmt assertion = AssertStmt::make(y >= 3, Call::make(Int(32), "halide_error_param_too_small_i64",
+                                                         vec<Expr>(string("y"), y, 3), Call::Extern));
     Stmt block = Block::make(assertion, pipeline);
     Stmt let_stmt = LetStmt::make("y", 17, block);
     Stmt allocate = Allocate::make("buf", f32, vec(Expr(1023)), const_true(), let_stmt);
@@ -93,7 +109,7 @@ void IRPrinter::test() {
     std::string correct_source = \
         "allocate buf[float32 * 1023]\n"
         "let y = 17\n"
-        "assert((y > 3), stringify(\"y is greater than \", 3))\n"
+        "assert((y >= 3), halide_error_param_too_small_i64(\"y\", y, 3))\n"
         "produce buf {\n"
         "  parallel (x, -2, (y + 2)) {\n"
         "    buf[(y - 1)] = ((x*17)/(x - 3))\n"
@@ -137,6 +153,34 @@ ostream &operator<<(ostream &stream, const Stmt &ir) {
         p.print(ir);
     }
     return stream;
+}
+
+
+ostream &operator <<(ostream &stream, const LoweredFunc &function) {
+    stream << function.linkage << " func " << function.name << " (";
+    for (size_t i = 0; i < function.args.size(); i++) {
+        stream << function.args[i].name;
+        if (i + 1 < function.args.size()) {
+            stream << ", ";
+        }
+    }
+    stream << ") {\n";
+    stream << function.body;
+    stream << "}\n\n";
+    return stream;
+}
+
+
+std::ostream &operator<<(std::ostream &out, const LoweredFunc::LinkageType &type) {
+    switch (type) {
+    case LoweredFunc::External:
+        out << "external";
+        break;
+    case LoweredFunc::Internal:
+        out << "internal";
+        break;
+    }
+    return out;
 }
 
 IRPrinter::IRPrinter(ostream &s) : stream(s), indent(0) {

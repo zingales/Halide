@@ -1,5 +1,3 @@
-#if __cplusplus > 199711L
-
 #include "Halide.h"
 
 #include "paramtest_generator.cpp"
@@ -122,7 +120,10 @@ int main(int argc, char **argv) {
         ParamTest gen;
         std::vector<Argument> args = gen.get_filter_arguments();
         std::vector<Parameter> params = gen.get_filter_parameters();
-        if (args.size() != 3 || args[0].name != "input" || args[1].name != "float_arg" || args[2].name != "int_arg") {
+        if (args.size() != 3 ||
+            args[0].name != "input" || args[1].name != "float_arg" || args[2].name != "int_arg" ||
+            !args[0].is_buffer() || !args[1].is_scalar() || !args[2].is_scalar() ||
+            !args[0].is_input() || !args[1].is_input() || !args[2].is_input()) {
             fprintf(stderr, "get_filter_arguments is incorrect\n");
             exit(-1);
         }
@@ -169,14 +170,3 @@ int main(int argc, char **argv) {
     printf("Success!\n");
     return 0;
 }
-
-#else
-
-#include <stdio.h>
-
-int main(int argc, char **argv) {
-    printf("This test requires C++11\n");
-    return 0;
-}
-
-#endif

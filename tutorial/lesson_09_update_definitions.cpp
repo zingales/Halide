@@ -8,11 +8,11 @@
 // Otherwise, see the platform-specific compiler invocations below.
 
 // On linux, you can compile and run it like so:
-// g++ lesson_09*.cpp -g -I ../include -L ../bin -lHalide `libpng-config --cflags --ldflags` -lpthread -ldl -fopenmp -o lesson_09
+// g++ lesson_09*.cpp -g -std=c++11 -I ../include -L ../bin -lHalide `libpng-config --cflags --ldflags` -lpthread -ldl -fopenmp -o lesson_09
 // LD_LIBRARY_PATH=../bin ./lesson_09
 
 // On os x (will only work if you actually have g++, not Apple's pretend g++ which is actually clang):
-// g++ lesson_09*.cpp -g -I ../include -L ../bin -lHalide `libpng-config --cflags --ldflags` -fopenmp -o lesson_09
+// g++ lesson_09*.cpp -g -std=c++11 -I ../include -L ../bin -lHalide `libpng-config --cflags --ldflags` -fopenmp -o lesson_09
 // DYLD_LIBRARY_PATH=../bin ./lesson_09
 
 #include "Halide.h"
@@ -621,10 +621,7 @@ int main(int argc, char **argv) {
         // clamp-to-edge boundary condition:
 
         // First add the boundary condition.
-        Func clamped;
-        Expr x_clamped = clamp(x, 0, input.width()-1);
-        Expr y_clamped = clamp(y, 0, input.height()-1);
-        clamped(x, y) = input(x_clamped, y_clamped);
+        Func clamped = BoundaryConditions::repeat_edge(input);
 
         // Define a 5x5 box that starts at (-2, -2)
         RDom r(-2, 5, -2, 5);

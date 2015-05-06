@@ -371,6 +371,7 @@ CodeGen_ARM::CodeGen_ARM(Target t) : CodeGen_Posix(t) {
     }
 }
 
+
 llvm::Triple CodeGen_ARM::get_target_triple() const {
     llvm::Triple triple;
 
@@ -423,6 +424,23 @@ llvm::Triple CodeGen_ARM::get_target_triple() const {
     }
 
     return triple;
+}
+
+
+llvm::DataLayout CodeGen_ARM::get_data_layout() const {
+    if (target.bits == 32) {
+        if (target.os == Target::IOS) {
+            return llvm::DataLayout("e-m:o-p:32:32-f64:32:64-v64:32:64-v128:32:128-a:0:32-n32-S32");
+        } else {
+            return llvm::DataLayout("e-m:e-p:32:32-i64:64-v128:64:128-a:0:32-n32-S64");
+        }
+    } else { // 64-bit
+        if (target.os == Target::IOS) {
+            return llvm::DataLayout("e-m:o-i64:64-i128:128-n32:64-S128");
+        } else {
+            return llvm::DataLayout("e-m:e-i64:64-i128:128-n32:64-S128");
+        }
+    }
 }
 
 namespace {
@@ -973,7 +991,7 @@ void CodeGen_ARM::visit(const Store *op) {
 
     // First dig through let expressions
     Expr rhs = op->value;
-    vector<pair<string, Expr> > lets;
+    vector<pair<string, Expr>> lets;
     while (const Let *let = rhs.as<Let>()) {
         rhs = let->body;
         lets.push_back(make_pair(let->name, let->value));
@@ -1043,7 +1061,7 @@ void CodeGen_ARM::visit(const Store *op) {
 
         internal_assert(slices >= 1);
         for (int i = 0; i < t.width; i += intrin_type.width) {
-            Expr slice_base = simplify(ramp->base + i * ramp->stride);
+            Expr slice_base = simplify(ramp->base + i * num_vecs);
             Expr slice_ramp = Ramp::make(slice_base, ramp->stride, intrin_type.width);
             Value *ptr = codegen_buffer_pointer(op->name, call->args[0].type().element_of(), slice_base);
             ptr = builder->CreatePointerCast(ptr, i8->getPointerTo());

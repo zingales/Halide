@@ -1,4 +1,5 @@
 #include "IREquality.h"
+#include "IRVisitor.h"
 #include "IROperator.h"
 
 namespace Halide {
@@ -86,7 +87,6 @@ private:
     void visit(const Block *);
     void visit(const IfThenElse *);
     void visit(const Evaluate *);
-
 };
 
 template<typename T>

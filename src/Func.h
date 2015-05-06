@@ -16,6 +16,7 @@
 #include "Image.h"
 #include "Target.h"
 #include "Tuple.h"
+#include "Module.h"
 
 namespace Halide {
 
@@ -76,27 +77,17 @@ public:
                                 VarOrRVar xi, VarOrRVar yi,
                                 Expr xfactor, Expr yfactor);
     EXPORT Stage &reorder(const std::vector<VarOrRVar> &vars);
-    EXPORT Stage &reorder(VarOrRVar x, VarOrRVar y);
-    EXPORT Stage &reorder(VarOrRVar x, VarOrRVar y, VarOrRVar z);
-    EXPORT Stage &reorder(VarOrRVar x, VarOrRVar y, VarOrRVar z,
-                                   VarOrRVar w);
-    EXPORT Stage &reorder(VarOrRVar x, VarOrRVar y, VarOrRVar z,
-                                   VarOrRVar w, VarOrRVar t);
-    EXPORT Stage &reorder(VarOrRVar x, VarOrRVar y, VarOrRVar z,
-                                   VarOrRVar w, VarOrRVar t1, VarOrRVar t2);
-    EXPORT Stage &reorder(VarOrRVar x, VarOrRVar y, VarOrRVar z,
-                                   VarOrRVar w, VarOrRVar t1, VarOrRVar t2,
-                                   VarOrRVar t3);
-    EXPORT Stage &reorder(VarOrRVar x, VarOrRVar y, VarOrRVar z,
-                                   VarOrRVar w, VarOrRVar t1, VarOrRVar t2,
-                                   VarOrRVar t3, VarOrRVar t4);
-    EXPORT Stage &reorder(VarOrRVar x, VarOrRVar y, VarOrRVar z,
-                                   VarOrRVar w, VarOrRVar t1, VarOrRVar t2,
-                                   VarOrRVar t3, VarOrRVar t4, VarOrRVar t5);
-    EXPORT Stage &reorder(VarOrRVar x, VarOrRVar y, VarOrRVar z,
-                                   VarOrRVar w, VarOrRVar t1, VarOrRVar t2,
-                                   VarOrRVar t3, VarOrRVar t4, VarOrRVar t5,
-                                   VarOrRVar t6);
+
+    template <typename... Args>
+    NO_INLINE typename std::enable_if<Internal::all_are_convertible<VarOrRVar, Args...>::value, Stage &>::type
+    reorder(VarOrRVar x, VarOrRVar y, Args... args) {
+        std::vector<VarOrRVar> collected_args;
+        collected_args.push_back(x);
+        collected_args.push_back(y);
+        Internal::collect_args(collected_args, args...);
+        return reorder(collected_args);
+    }
+
     EXPORT Stage &rename(VarOrRVar old_name, VarOrRVar new_name);
     EXPORT Stage specialize(Expr condition);
 
@@ -425,7 +416,7 @@ class Func {
     /** Some of the arg_values need to be rebound on every call if the
      * image params change. The pointers for the scalar params will
      * still be valid though. */
-    std::vector<std::pair<int, Internal::Parameter> > image_param_args;
+    std::vector<std::pair<int, Internal::Parameter>> image_param_args;
 
     /** The user context that's used when jitting. This is not settable
      * by user code, but is reserved for internal use.
@@ -440,6 +431,9 @@ class Func {
 
     /** A set of custom passes to use when lowering this Func. */
     std::vector<CustomLoweringPass> custom_lowering_passes;
+
+    // Helper function for recursive reordering support
+    EXPORT Func &reorder_storage(const std::vector<Var> &dims, size_t start);
 
 public:
 
@@ -518,7 +512,7 @@ public:
     EXPORT void realize(Buffer dst, const Target &target = get_jit_target_from_environment());
 
     template<typename T>
-    void realize(Image<T> dst, const Target &target = get_jit_target_from_environment()) {
+    NO_INLINE void realize(Image<T> dst, const Target &target = get_jit_target_from_environment()) {
         // Images are expected to exist on-host.
         realize(Buffer(dst), target);
         dst.copy_to_host();
@@ -541,9 +535,9 @@ public:
      * signature, and C function name (which defaults to the same name
      * as this halide function */
     //@{
-    EXPORT void compile_to_bitcode(const std::string &filename, std::vector<Argument>, const std::string &fn_name,
+    EXPORT void compile_to_bitcode(const std::string &filename, const std::vector<Argument> &, const std::string &fn_name,
                                    const Target &target = get_target_from_environment());
-    EXPORT void compile_to_bitcode(const std::string &filename, std::vector<Argument>,
+    EXPORT void compile_to_bitcode(const std::string &filename, const std::vector<Argument> &,
                                    const Target &target = get_target_from_environment());
     // @}
 
@@ -553,9 +547,9 @@ public:
      * as this halide function. You probably don't want to use this
      * directly; call compile_to_file instead. */
     //@{
-    EXPORT void compile_to_object(const std::string &filename, std::vector<Argument>, const std::string &fn_name,
+    EXPORT void compile_to_object(const std::string &filename, const std::vector<Argument> &, const std::string &fn_name,
                                   const Target &target = get_target_from_environment());
-    EXPORT void compile_to_object(const std::string &filename, std::vector<Argument>,
+    EXPORT void compile_to_object(const std::string &filename, const std::vector<Argument> &,
                                   const Target &target = get_target_from_environment());
     // @}
 
@@ -566,7 +560,7 @@ public:
      * function. You don't actually have to have defined this function
      * yet to call this. You probably don't want to use this directly;
      * call compile_to_file instead. */
-    EXPORT void compile_to_header(const std::string &filename, std::vector<Argument>, const std::string &fn_name = "",
+    EXPORT void compile_to_header(const std::string &filename, const std::vector<Argument> &, const std::string &fn_name = "",
                                   const Target &target = get_target_from_environment());
 
     /** Statically compile this function to text assembly equivalent
@@ -575,9 +569,9 @@ public:
      * disassemble anything, or if you need to feed the assembly into
      * some custom toolchain to produce an object file (e.g. iOS) */
     //@{
-    EXPORT void compile_to_assembly(const std::string &filename, std::vector<Argument>, const std::string &fn_name,
+    EXPORT void compile_to_assembly(const std::string &filename, const std::vector<Argument> &, const std::string &fn_name,
                                     const Target &target = get_target_from_environment());
-    EXPORT void compile_to_assembly(const std::string &filename, std::vector<Argument>,
+    EXPORT void compile_to_assembly(const std::string &filename, const std::vector<Argument> &,
                                     const Target &target = get_target_from_environment());
     // @}
     /** Statically compile this function to C source code. This is
@@ -585,7 +579,7 @@ public:
      * many platforms. Vectorization will fail, and parallelization
      * will produce serial code. */
     EXPORT void compile_to_c(const std::string &filename,
-                             std::vector<Argument>,
+                             const std::vector<Argument> &,
                              const std::string &fn_name = "",
                              const Target &target = get_target_from_environment());
 
@@ -593,78 +587,14 @@ public:
      * for analyzing and debugging scheduling. Can emit html or plain
      * text. */
     EXPORT void compile_to_lowered_stmt(const std::string &filename,
+                                        const std::vector<Argument> &args,
                                         StmtOutputFormat fmt = Text,
                                         const Target &target = get_target_from_environment());
 
-    /** Write out an internal representation of lowered code as above
-     * but simplified using the provided realization bounds and other
-     * concrete parameter values. Can emit html or plain text. */
-    //@{
-    EXPORT void compile_to_simplified_lowered_stmt(const std::string &filename,
-                                                   Realization dst,
-                                                   const std::map<std::string, Expr> &additional_replacements,
-                                                   StmtOutputFormat fmt = Text,
-                                                   const Target &t = get_target_from_environment());
-
-    EXPORT void compile_to_simplified_lowered_stmt(const std::string &filename,
-                                                   Realization dst,
-                                                   StmtOutputFormat fmt = Text,
-                                                   const Target &t = get_target_from_environment());
-
-    EXPORT void compile_to_simplified_lowered_stmt(const std::string &filename,
-                                                   Buffer dst,
-                                                   const std::map<std::string, Expr> &additional_replacements,
-                                                   StmtOutputFormat fmt = Text,
-                                                   const Target &target = get_target_from_environment());
-
-    EXPORT void compile_to_simplified_lowered_stmt(const std::string &filename,
-                                                   Buffer dst,
-                                                   StmtOutputFormat fmt = Text,
-                                                   const Target &target = get_target_from_environment());
-
-    EXPORT void compile_to_simplified_lowered_stmt(const std::string &filename,
-                                                   int x_size, int y_size, int z_size, int w_size,
-                                                   const std::map<std::string, Expr> &additional_replacements,
-                                                   StmtOutputFormat fmt = Text,
-                                                   const Target &t = get_target_from_environment());
-
-    EXPORT void compile_to_simplified_lowered_stmt(const std::string &filename,
-                                                   int x_size, int y_size, int z_size, int w_size,
-                                                   StmtOutputFormat fmt = Text,
-                                                   const Target &t = get_target_from_environment());
-
-    EXPORT void compile_to_simplified_lowered_stmt(const std::string &filename,
-                                                   int x_size, int y_size, int z_size,
-                                                   const std::map<std::string, Expr> &additional_replacements,
-                                                   StmtOutputFormat fmt = Text,
-                                                   const Target &t = get_target_from_environment());
-
-    EXPORT void compile_to_simplified_lowered_stmt(const std::string &filename,
-                                                   int x_size, int y_size, int z_size,
-                                                   StmtOutputFormat fmt = Text,
-                                                   const Target &t = get_target_from_environment());
-
-    EXPORT void compile_to_simplified_lowered_stmt(const std::string &filename,
-                                                   int x_size, int y_size,
-                                                   const std::map<std::string, Expr> &additional_replacements,
-                                                   StmtOutputFormat fmt = Text,
-                                                   const Target &t = get_target_from_environment());
-
-    EXPORT void compile_to_simplified_lowered_stmt(const std::string &filename,
-                                                   int x_size, int y_size,
-                                                   StmtOutputFormat fmt = Text,
-                                                   const Target &t = get_target_from_environment());
-
-    EXPORT void compile_to_simplified_lowered_stmt(const std::string &filename,
-                                                   int x_size,
-                                                   const std::map<std::string, Expr> &additional_replacements,
-                                                   StmtOutputFormat fmt = Text,
-                                                   const Target &t = get_target_from_environment());
-
-    EXPORT void compile_to_simplified_lowered_stmt(const std::string &filename,
-                                                   int x_size,
-                                                   StmtOutputFormat fmt = Text,
-                                                   const Target &t = get_target_from_environment());
+    /** Write out the loop nests specified by the schedule for this
+     * Function. Helpful for understanding what a schedule is
+     * doing. */
+    EXPORT void print_loop_nest();
 
     // @}
 
@@ -672,22 +602,15 @@ public:
      * arguments. Also names the C function to match the first
      * argument.
      */
-    //@{
-    EXPORT void compile_to_file(const std::string &filename_prefix, std::vector<Argument> args,
-                                const Target &target = get_target_from_environment());
-    EXPORT void compile_to_file(const std::string &filename_prefix,
-                                const Target &target = get_target_from_environment());
-    EXPORT void compile_to_file(const std::string &filename_prefix, Argument a,
-                                const Target &target = get_target_from_environment());
-    EXPORT void compile_to_file(const std::string &filename_prefix, Argument a, Argument b,
-                                const Target &target = get_target_from_environment());
-    EXPORT void compile_to_file(const std::string &filename_prefix, Argument a, Argument b, Argument c,
-                                const Target &target = get_target_from_environment());
-    EXPORT void compile_to_file(const std::string &filename_prefix, Argument a, Argument b, Argument c, Argument d,
-                                const Target &target = get_target_from_environment());
-    EXPORT void compile_to_file(const std::string &filename_prefix, Argument a, Argument b, Argument c, Argument d, Argument e,
+    // @{
+    EXPORT void compile_to_file(const std::string &filename_prefix, const std::vector<Argument> &args,
                                 const Target &target = get_target_from_environment());
     // @}
+
+    /** Store an internal representation of lowered code as a self
+     * contained Module suitable for further compilation. */
+    EXPORT Module compile_to_module(const std::vector<Argument> &args, const std::string &fn_name = "",
+                                    const Target &target = get_target_from_environment());
 
     /** Compile and generate multiple target files with single call.
      * Deduces target files based on filenames specified in
@@ -944,14 +867,15 @@ public:
      * enough implicit vars are added to the end of the argument list
      * to make up the difference (see \ref Var::implicit) */
     // @{
-    EXPORT FuncRefVar operator()() const;
-    EXPORT FuncRefVar operator()(Var x) const;
-    EXPORT FuncRefVar operator()(Var x, Var y) const;
-    EXPORT FuncRefVar operator()(Var x, Var y, Var z) const;
-    EXPORT FuncRefVar operator()(Var x, Var y, Var z, Var w) const;
-    EXPORT FuncRefVar operator()(Var x, Var y, Var z, Var w, Var u) const;
-    EXPORT FuncRefVar operator()(Var x, Var y, Var z, Var w, Var u, Var v) const;
     EXPORT FuncRefVar operator()(std::vector<Var>) const;
+
+    template <typename... Args>
+    NO_INLINE typename std::enable_if<Internal::all_are_convertible<Var, Args...>::value, FuncRefVar>::type
+    operator()(Args... args) const {
+        std::vector<Var> collected_args;
+        Internal::collect_args(collected_args, args...);
+        return this->operator()(collected_args);
+    }
     // @}
 
     /** Either calls to the function, or the left-hand-side of a
@@ -961,13 +885,16 @@ public:
      * the end of the argument list to make up the difference. (see
      * \ref Var::implicit)*/
     // @{
-    EXPORT FuncRefExpr operator()(Expr x) const;
-    EXPORT FuncRefExpr operator()(Expr x, Expr y) const;
-    EXPORT FuncRefExpr operator()(Expr x, Expr y, Expr z) const;
-    EXPORT FuncRefExpr operator()(Expr x, Expr y, Expr z, Expr w) const;
-    EXPORT FuncRefExpr operator()(Expr x, Expr y, Expr z, Expr w, Expr u) const;
-    EXPORT FuncRefExpr operator()(Expr x, Expr y, Expr z, Expr w, Expr u, Expr v) const;
     EXPORT FuncRefExpr operator()(std::vector<Expr>) const;
+
+    template <typename... Args>
+    NO_INLINE typename std::enable_if<Internal::all_are_convertible<Expr, Args...>::value, FuncRefExpr>::type
+    operator()(Expr x, Args... args) const {
+        std::vector<Expr> collected_args;
+        collected_args.push_back(x);
+        Internal::collect_args(collected_args, args...);
+        return (*this)(collected_args);
+    }
     // @}
 
     /** Split a dimension into inner and outer subdimensions with the
@@ -1051,56 +978,15 @@ public:
      * innermost out */
     EXPORT Func &reorder(const std::vector<VarOrRVar> &vars);
 
-    /** Reorder two dimensions so that x is traversed inside y. Does
-     * not affect the nesting order of other dimensions. E.g, if you
-     * say foo(x, y, z, w) = bar; foo.reorder(w, x); then foo will be
-     * traversed in the order (w, y, z, x), from innermost
-     * outwards. */
-    EXPORT Func &reorder(VarOrRVar x, VarOrRVar y);
-
-    /** Reorder three dimensions to have the given nesting order, from
-     * innermost out */
-    EXPORT Func &reorder(VarOrRVar x, VarOrRVar y, VarOrRVar z);
-
-    /** Reorder four dimensions to have the given nesting order, from
-     * innermost out */
-    EXPORT Func &reorder(VarOrRVar x, VarOrRVar y, VarOrRVar z,
-                         VarOrRVar w);
-
-    /** Reorder five dimensions to have the given nesting order, from
-     * innermost out */
-    EXPORT Func &reorder(VarOrRVar x, VarOrRVar y, VarOrRVar z,
-                         VarOrRVar w, VarOrRVar t);
-
-    /** Reorder six dimensions to have the given nesting order, from
-     * innermost out */
-    EXPORT Func &reorder(VarOrRVar x, VarOrRVar y, VarOrRVar z,
-                         VarOrRVar w, VarOrRVar t1, VarOrRVar t2);
-
-    /** Reorder seven dimensions to have the given nesting order, from
-     * innermost out */
-    EXPORT Func &reorder(VarOrRVar x, VarOrRVar y, VarOrRVar z,
-                         VarOrRVar w, VarOrRVar t1, VarOrRVar t2,
-                         VarOrRVar t3);
-
-    /** Reorder eight dimensions to have the given nesting order, from
-     * innermost out */
-    EXPORT Func &reorder(VarOrRVar x, VarOrRVar y, VarOrRVar z,
-                         VarOrRVar w, VarOrRVar t1, VarOrRVar t2,
-                         VarOrRVar t3, VarOrRVar t4);
-
-    /** Reorder nine dimensions to have the given nesting order, from
-     * innermost out */
-    EXPORT Func &reorder(VarOrRVar x, VarOrRVar y, VarOrRVar z,
-                         VarOrRVar w, VarOrRVar t1, VarOrRVar t2,
-                         VarOrRVar t3, VarOrRVar t4, VarOrRVar t5);
-
-    /** Reorder ten dimensions to have the given nesting order, from
-     * innermost out */
-    EXPORT Func &reorder(VarOrRVar x, VarOrRVar y, VarOrRVar z,
-                         VarOrRVar w, VarOrRVar t1, VarOrRVar t2,
-                         VarOrRVar t3, VarOrRVar t4, VarOrRVar t5,
-                         VarOrRVar t6);
+    template <typename... Args>
+    NO_INLINE typename std::enable_if<Internal::all_are_convertible<VarOrRVar, Args...>::value, Func &>::type
+    reorder(VarOrRVar x, VarOrRVar y, Args... args) {
+        std::vector<VarOrRVar> collected_args;
+        collected_args.push_back(x);
+        collected_args.push_back(y);
+        Internal::collect_args(collected_args, args...);
+        return reorder(collected_args);
+    }
 
     /** Rename a dimension. Equivalent to split with a inner size of one. */
     EXPORT Func &rename(VarOrRVar old_name, VarOrRVar new_name);
@@ -1408,10 +1294,18 @@ public:
      * positions in the nesting order while the specified variables
      * are reordered around them. */
     // @{
+    EXPORT Func &reorder_storage(const std::vector<Var> &dims);
+
     EXPORT Func &reorder_storage(Var x, Var y);
-    EXPORT Func &reorder_storage(Var x, Var y, Var z);
-    EXPORT Func &reorder_storage(Var x, Var y, Var z, Var w);
-    EXPORT Func &reorder_storage(Var x, Var y, Var z, Var w, Var t);
+    template <typename... Args>
+    NO_INLINE typename std::enable_if<Internal::all_are_convertible<Var, Args...>::value, Func &>::type
+    reorder_storage(Var x, Var y, Args... args) {
+        std::vector<Var> collected_args;
+        collected_args.push_back(x);
+        collected_args.push_back(y);
+        Internal::collect_args(collected_args, args...);
+        return reorder_storage(collected_args);
+    }
     // @}
 
     /** Compute this function as needed for each unique value of the

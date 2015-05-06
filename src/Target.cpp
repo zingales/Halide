@@ -266,8 +266,10 @@ bool Target::merge_string(const std::string &target) {
             set_feature(Target::ARMv7s);
         } else if (tok == "no_neon") {
             set_feature(Target::NoNEON);
-        } else if (tok == "cuda" || tok == "ptx") {
+        } else if (tok == "cuda") {
             set_feature(Target::CUDA);
+        } else if (tok == "ptx") {
+            user_error << "The 'ptx' target feature flag is deprecated, use 'cuda' instead\n";
         } else if (tok == "cuda_capability_30") {
             set_features(vec(Target::CUDA, Target::CUDACapability30));
         } else if (tok == "cuda_capability_32") {
@@ -284,6 +286,8 @@ bool Target::merge_string(const std::string &target) {
             set_feature(Target::OpenGL);
         } else if (tok == "user_context") {
             set_feature(Target::UserContext);
+        } else if (tok == "register_metadata") {
+            set_feature(Target::RegisterMetadata);
         } else if (tok == "no_asserts") {
             set_feature(Target::NoAsserts);
         } else if (tok == "no_bounds_query") {
@@ -296,6 +300,8 @@ bool Target::merge_string(const std::string &target) {
             set_features(vec(Target::FMA4, Target::SSE41, Target::AVX));
         } else if (tok == "f16c") {
             set_features(vec(Target::F16C, Target::SSE41, Target::AVX));
+        } else if (tok == "matlab") {
+            set_feature(Target::Matlab);
         } else {
             return false;
         }
@@ -354,7 +360,9 @@ std::string Target::to_string() const {
       "cuda", "cuda_capability_30", "cuda_capability_32", "cuda_capability_35", "cuda_capability_50",
       "opencl", "cl_doubles",
       "opengl",
-      "user_context"
+      "user_context",
+      "register_metadata",
+      "matlab"
   };
   internal_assert(sizeof(feature_names) / sizeof(feature_names[0]) == FeatureEnd);
   string result = string(arch_names[arch])

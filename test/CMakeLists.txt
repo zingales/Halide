@@ -145,6 +145,18 @@ if (WITH_TEST_GENERATORS)
                                "${GEN_NAME}"
                                "${FUNC_NAME}"
                                "target=host-user_context")
+    # metadata_tester_aottest.cpp depends on two variants of metadata_generator
+    elseif(TEST_SRC STREQUAL "metadata_tester_aottest.cpp")
+      halide_add_generator_dependency("${TEST_RUNNER}"
+                               "generator_${GEN_NAME}"
+                               "${GEN_NAME}"
+                               "${FUNC_NAME}"
+                               "target=host-register_metadata")
+      halide_add_generator_dependency("${TEST_RUNNER}"
+                               "generator_${GEN_NAME}"
+                               "${GEN_NAME}"
+                               "${FUNC_NAME}_ucon"
+                               "target=host-register_metadata-user_context")
     else()
       # All the other foo_test.cpp just depend on foo_generator.cpp
       halide_add_generator_dependency("${TEST_RUNNER}"
@@ -162,6 +174,7 @@ if (WITH_TEST_GENERATORS)
       endif()
     endif()
     target_include_directories("${TEST_RUNNER}" PRIVATE "${CMAKE_SOURCE_DIR}/apps/support")
+    target_include_directories("${TEST_RUNNER}" PRIVATE "${CMAKE_SOURCE_DIR}/src/runtime")
     set_target_properties("${TEST_RUNNER}" PROPERTIES FOLDER "generator")
     if (WIN32)
       # /FORCE:multiple allows clobbering the halide runtime symbols in the lib
